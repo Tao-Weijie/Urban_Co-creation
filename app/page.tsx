@@ -10,7 +10,7 @@ import {
 
 import Viewport3D from '@/components/3DViewport';
 import LeftBar from '@/components/LeftBar';
-import FacePropertiesPanel from '@/components/FacePropertiesPanel';
+import HoverPanel from '@/components/HoverPanel';
 import BottomBar from '@/components/BottomBar';
 import EditFaceModal from '@/components/EditFaceModal';
 
@@ -209,7 +209,7 @@ export default function Home() {
 
       {/* Hover Information Panel (Follows cursor) */}
       {!isEditModalOpen && (
-        <FacePropertiesPanel hoveredFaceInfo={hoveredFaceInfo} hoverPosition={hoverPosition} />
+        <HoverPanel hoveredFaceInfo={hoveredFaceInfo} hoverPosition={hoverPosition} />
       )}
 
       {/* Standard Views Selector (Bottom Center) */}
