@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001 --webpack",
+    "dev:python": ".venv\\Scripts\\python -m uvicorn backend.server:app --host 127.0.0.1 --port 8000 --reload",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:python\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -20,6 +22,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "^0.184.1",
+    "concurrently": "^8.2.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",

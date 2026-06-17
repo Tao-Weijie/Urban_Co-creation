@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Face, TopologyData } from '@/rules/evaluate';
+import { Face, TopologyData } from '@/rules/topology';
 
 interface Viewport3DProps {
   modelFile: File | null;
@@ -106,7 +106,6 @@ export default function Viewport3D({
     // 1. Initialize Scene
     const scene = new THREE.Scene();
     sceneRef.current = scene;
-    scene.background = new THREE.Color(0x09090b);
 
     // 2. Initialize Camera
     const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 3000);
@@ -115,7 +114,7 @@ export default function Viewport3D({
     cameraRef.current = camera;
 
     // 3. Initialize WebGLRenderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
@@ -131,7 +130,12 @@ export default function Viewport3D({
     topologyGroupRef.current = topologyGroup;
 
     // 5. Add 100x100 Grid (divisions=20, flat on X-Y plane)
-    const gridHelper = new THREE.GridHelper(100, 20, 0xffffff, 0xffffff);
+    const gridHelper = new THREE.GridHelper(100, 20, 0x888888, 0x888888);
+    if (gridHelper.material) {
+      const mat = gridHelper.material as THREE.Material;
+      mat.transparent = true;
+      mat.opacity = 0.35;
+    }
     gridHelper.rotation.x = Math.PI / 2;
     gridHelper.position.set(0, 0, 0);
     scene.add(gridHelper);
@@ -760,7 +764,10 @@ export default function Viewport3D({
             onLoadingChange(false);
             if (modelName && modelName !== lastModelNameRef.current) {
               lastModelNameRef.current = modelName;
-              fitCameraToAllUploaded();
+              const hasGridAlready = topologyGroupRef.current && topologyGroupRef.current.children.length > 0;
+              if (!hasGridAlready) {
+                fitCameraToAllUploaded();
+              }
             }
           },
           (err) => {
@@ -780,7 +787,10 @@ export default function Viewport3D({
           setupBackgroundModel(obj);
           if (modelName && modelName !== lastModelNameRef.current) {
             lastModelNameRef.current = modelName;
-            fitCameraToAllUploaded();
+            const hasGridAlready = topologyGroupRef.current && topologyGroupRef.current.children.length > 0;
+            if (!hasGridAlready) {
+              fitCameraToAllUploaded();
+            }
           }
         } catch (err) {
           console.error(err);
@@ -805,7 +815,10 @@ export default function Viewport3D({
     setupTopologyGrid(topologyData);
     if (gridName && gridName !== lastGridNameRef.current) {
       lastGridNameRef.current = gridName;
-      fitCameraToAllUploaded();
+      const hasBgAlready = backgroundGroupRef.current && backgroundGroupRef.current.children.length > 0;
+      if (!hasBgAlready) {
+        fitCameraToAllUploaded();
+      }
     }
   }, [topologyData, gridName]);
 

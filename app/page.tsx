@@ -4,9 +4,8 @@ import React, { useState } from 'react';
 import {
   Face,
   TopologyData,
-  TopologyMetadata,
-  evaluateUrbanEconomy
-} from '@/rules/evaluate';
+  TopologyMetadata
+} from '@/rules/topology';
 
 import Viewport3D from '@/components/3DViewport';
 import LeftBar from '@/components/LeftBar';
@@ -15,6 +14,26 @@ import BottomBar from '@/components/BottomBar';
 import EditFaceModal from '@/components/EditFaceModal';
 
 export default function Home() {
+  // Theme state
+  const [theme, setTheme] = React.useState<'light' | 'dark'>('light');
+
+  const handleToggleTheme = () => {
+    const nextTheme = theme === 'light' ? 'dark' : 'light';
+    setTheme(nextTheme);
+    if (typeof window !== 'undefined') {
+      if (nextTheme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+  };
+
+  React.useEffect(() => {
+    // Force initial default light theme
+    document.documentElement.classList.remove('dark');
+  }, []);
+
   // Model and Grid metadata states
   const [modelName, setModelName] = useState<string>('');
   const [modelFile, setModelFile] = useState<File | null>(null);
@@ -65,10 +84,24 @@ export default function Home() {
   };
 
   // Run urban economics evaluation and set results in state
-  const runEvaluation = (faces: Face[], currentGridName: string, metadata?: TopologyMetadata) => {
+  const runEvaluation = async (faces: Face[], currentGridName: string, metadata?: TopologyMetadata) => {
     try {
-      const data = evaluateUrbanEconomy(faces);
-      
+      setIsLoading(true);
+      const response = await fetch('/api/evaluate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ faces }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Server returned error: ${errText}`);
+      }
+
+      const data = await response.json();
+
       setMacroStats({
         government_tax: data.government_tax,
         developer_profit: data.developer_profit,
@@ -79,11 +112,13 @@ export default function Home() {
         metadata: metadata || topologyData?.metadata || { map_id: "urban_map", total_faces: faces.length },
         faces: data.faces
       };
-      
+
       setTopologyData(updatedTopology);
     } catch (err: any) {
       console.error("Failed to run urban economics evaluation:", err);
       alert("Evaluation Error: " + err.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -98,7 +133,7 @@ export default function Home() {
       try {
         const arrayBuffer = e.target?.result as ArrayBuffer;
         const uint8Array = new Uint8Array(arrayBuffer);
-        
+
         // Detect UTF-16 BOM
         let encoding = 'utf-8';
         if (uint8Array.length >= 2) {
@@ -108,11 +143,11 @@ export default function Home() {
             encoding = 'utf-16be';
           }
         }
-        
+
         const decoder = new TextDecoder(encoding);
         const text = decoder.decode(uint8Array);
         const json = JSON.parse(text);
-        
+
         if (json.faces) {
           setGridName(file.name);
           runEvaluation(json.faces, file.name, json.metadata);
@@ -173,8 +208,8 @@ export default function Home() {
   };
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-zinc-950 font-sans text-white select-none">
-      
+    <div className="relative w-screen h-screen overflow-hidden bg-background font-sans text-foreground select-none transition-colors duration-300">
+
       {/* 3D Viewport Container */}
       <Viewport3D
         modelFile={modelFile}
@@ -213,7 +248,7 @@ export default function Home() {
       )}
 
       {/* Standard Views Selector (Bottom Center) */}
-      <BottomBar onSetView={setStandardView} />
+      <BottomBar onSetView={setStandardView} theme={theme} onToggleTheme={handleToggleTheme} />
 
       {/* Edit Face Properties Modal Popup */}
       <EditFaceModal

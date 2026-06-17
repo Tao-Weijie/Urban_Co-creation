@@ -40,57 +40,57 @@ export default function HoverPanel({ hoveredFaceInfo, hoverPosition }: HoverPane
   return (
     <div 
       style={{ left, top }}
-      className="fixed pointer-events-none z-50 w-72 rounded-2xl border border-white/10 bg-black/85 p-4 shadow-2xl backdrop-blur-md"
+      className="fixed pointer-events-none z-50 w-72 rounded-2xl border border-black/10 bg-white/90 dark:border-white/10 dark:bg-black/85 p-4 shadow-2xl backdrop-blur-md text-zinc-800 dark:text-zinc-200"
     >
       <div className="space-y-3 font-mono text-xs">
         {/* Tooltip Header */}
-        <div className="flex justify-between items-center pb-2 border-b border-white/5">
-          <span className="text-zinc-400">Hovered Face:</span>
+        <div className="flex justify-between items-center pb-2 border-b border-black/5 dark:border-white/5">
+          <span className="text-zinc-500 dark:text-zinc-400">Hovered Face:</span>
           <span className="font-semibold text-pink-500 truncate max-w-[130px]">
             Face {hoveredFaceInfo.id}
           </span>
         </div>
         
         {/* Tooltip Metrics */}
-        <div className="space-y-2 text-zinc-300">
+        <div className="space-y-2 text-zinc-600 dark:text-zinc-300">
           <div className="flex justify-between">
             <span>Face ID:</span>
-            <span className="text-zinc-100 font-semibold">{hoveredFaceInfo.id}</span>
+            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{hoveredFaceInfo.id}</span>
           </div>
           <div className="flex justify-between">
             <span>Occupied:</span>
-            <span className={`font-semibold ${hoveredFaceInfo.state?.is_occupied ? 'text-emerald-400' : 'text-zinc-500'}`}>
+            <span className={`font-semibold ${hoveredFaceInfo.state?.is_occupied ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
               {hoveredFaceInfo.state?.is_occupied ? 'YES' : 'NO'}
             </span>
           </div>
           <div className="flex justify-between">
             <span>Build Type:</span>
-            <span className="text-zinc-100 uppercase font-semibold">{hoveredFaceInfo.state?.built_type || 'N/A'}</span>
+            <span className="text-zinc-950 dark:text-zinc-100 uppercase font-semibold">{hoveredFaceInfo.state?.built_type || 'N/A'}</span>
           </div>
           <div className="flex justify-between">
             <span>Floors:</span>
-            <span className="text-zinc-100 font-semibold">{hoveredFaceInfo.state?.height_floors ?? 0} F</span>
+            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{hoveredFaceInfo.state?.height_floors ?? 0} F</span>
           </div>
           <div className="flex justify-between">
             <span>Value Score:</span>
-            <span className="text-pink-400 font-semibold">{hoveredFaceInfo.evaluation?.score ?? 0} Pts</span>
+            <span className="text-pink-500 dark:text-pink-400 font-semibold">{hoveredFaceInfo.evaluation?.score ?? 0} Pts</span>
           </div>
           {hoveredFaceInfo.state?.built_type === 'residential' && (
             <div className="flex justify-between">
               <span>Population:</span>
-              <span className="text-emerald-400 font-semibold">{hoveredFaceInfo.state?.population ?? 0} Ppl</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{hoveredFaceInfo.state?.population ?? 0} Ppl</span>
             </div>
           )}
           <div className="flex justify-between pb-1">
             <span>Neighbors:</span>
-            <span className="text-zinc-100 truncate max-w-[120px]" title={hoveredFaceInfo.neighbors?.join(', ')}>
+            <span className="text-zinc-950 dark:text-zinc-100 truncate max-w-[120px]" title={hoveredFaceInfo.neighbors?.join(', ')}>
               {hoveredFaceInfo.neighbors?.join(', ') || 'None'}
             </span>
           </div>
         </div>
         
-        <div className="pt-2 border-t border-white/5 text-[9px] text-zinc-400 italic text-center">
-          💡 Click on any face mesh to edit its type.
+        <div className="pt-2 border-t border-black/5 dark:border-white/5 text-[9px] text-zinc-500 dark:text-zinc-400 italic text-center">
+          Click on any face mesh to edit its type.
         </div>
       </div>
     </div>

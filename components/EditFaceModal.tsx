@@ -26,15 +26,15 @@ export default function EditFaceModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-96 rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-2xl space-y-4">
+      <div className="w-96 rounded-3xl border border-black/10 bg-white dark:border-white/10 dark:bg-zinc-950 p-6 shadow-2xl space-y-4 text-zinc-800 dark:text-zinc-200">
         {/* Modal Header */}
-        <div className="flex justify-between items-center pb-2 border-b border-white/5">
-          <h3 className="text-sm font-bold text-zinc-100">
+        <div className="flex justify-between items-center pb-2 border-b border-black/5 dark:border-white/5">
+          <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-100">
             Edit Face Properties (ID: {face.id})
           </h3>
           <button 
             onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-200 font-sans text-lg"
+            className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 font-sans text-lg cursor-pointer"
           >
             ✕
           </button>
@@ -44,11 +44,11 @@ export default function EditFaceModal({
         <div className="space-y-4 font-sans text-xs">
           {/* Build Type Dropdown */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] text-zinc-400 font-semibold uppercase">Build Type</label>
+            <label className="text-[10px] text-zinc-500 dark:text-zinc-400 font-semibold uppercase">Build Type</label>
             <select
               value={editBuiltType}
               onChange={(e) => setEditBuiltType(e.target.value)}
-              className="bg-black border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-pink-500 transition cursor-pointer"
+              className="bg-zinc-100 border border-black/10 dark:bg-black dark:border-white/10 rounded-xl px-3 py-2 text-zinc-900 dark:text-white focus:outline-none focus:border-pink-500 transition cursor-pointer font-sans"
             >
               <option value="empty">Empty (Unoccupied)</option>
               <option value="residential">Residential</option>
@@ -58,16 +58,16 @@ export default function EditFaceModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="flex justify-end gap-2.5 pt-3 border-t border-white/5">
+        <div className="flex justify-end gap-2.5 pt-3 border-t border-black/5 dark:border-white/5">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-xs font-semibold text-zinc-300 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition duration-150"
+            className="px-4 py-2 text-xs font-semibold text-zinc-600 bg-black/5 border border-black/10 dark:text-zinc-300 dark:bg-white/5 dark:border-white/10 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition duration-150 cursor-pointer"
           >
             Cancel
           </button>
           <button
             onClick={() => onSave(editBuiltType)}
-            className="px-5 py-2 text-xs font-bold text-white bg-pink-500 rounded-xl hover:bg-pink-600 shadow-lg shadow-pink-500/10 transition duration-150"
+            className="px-5 py-2 text-xs font-bold text-white bg-pink-500 rounded-xl hover:bg-pink-600 shadow-lg shadow-pink-500/10 transition duration-150 cursor-pointer"
           >
             Save Changes
           </button>
