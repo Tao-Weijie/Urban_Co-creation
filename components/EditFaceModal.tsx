@@ -1,28 +1,30 @@
 import React, { useEffect, useState } from 'react';
-import { Face } from '@/rules/evaluate';
+import { UrbanUnit } from '@/rules/topology';
 
 interface EditFaceModalProps {
   isOpen: boolean;
-  face: Face | null;
+  unit: UrbanUnit | null;
+  currentBuiltType: string;
   onClose: () => void;
   onSave: (type: string) => void;
 }
 
 export default function EditFaceModal({
   isOpen,
-  face,
+  unit,
+  currentBuiltType,
   onClose,
   onSave
 }: EditFaceModalProps) {
   const [editBuiltType, setEditBuiltType] = useState<string>('empty');
 
   useEffect(() => {
-    if (face) {
-      setEditBuiltType(face.state?.built_type || 'empty');
+    if (unit) {
+      setEditBuiltType(currentBuiltType);
     }
-  }, [face]);
+  }, [unit, currentBuiltType]);
 
-  if (!isOpen || !face) return null;
+  if (!isOpen || !unit) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -30,7 +32,7 @@ export default function EditFaceModal({
         {/* Modal Header */}
         <div className="flex justify-between items-center pb-2 border-b border-black/5 dark:border-white/5">
           <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-100">
-            Edit Face Properties (ID: {face.id})
+            Edit Unit Properties (ID: {unit.id})
           </h3>
           <button 
             onClick={onClose}
@@ -76,3 +78,4 @@ export default function EditFaceModal({
     </div>
   );
 }
+

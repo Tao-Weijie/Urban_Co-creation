@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Face, TopologyData } from '@/rules/topology';
+import { Block, UrbanUnit, TopologyData } from '@/rules/topology';
 
 interface Viewport3DProps {
   modelFile: File | null;
@@ -14,8 +14,8 @@ interface Viewport3DProps {
   isForceWhite: boolean;
   standardView: 'top' | 'front' | 'left' | null;
   onStandardViewProcessed: () => void;
-  onFaceHover: (face: Face | null, x?: number, y?: number) => void;
-  onFaceClick: (face: Face) => void;
+  onUnitHover: (unit: UrbanUnit | null, x?: number, y?: number) => void;
+  onUnitClick: (unit: UrbanUnit) => void;
   onLoadingChange: (isLoading: boolean) => void;
 }
 
@@ -39,18 +39,15 @@ const setRangeColor = (
   colorAttr.needsUpdate = true;
 };
 
-// Helper to color face by build type and occupancy status
-const getColorByBuiltType = (type?: string, isOccupied?: boolean) => {
-  if (!isOccupied) return 0x4b5563; // Unoccupied: dark gray
-  switch (type?.toLowerCase()) {
-    case 'residential':
-      return 0xf59e0b; // Amber/Orange
-    case 'park':
-    case 'greenway':
-    case 'green':
-      return 0x10b981; // Green
+// Helper to color unit by build type
+const getColorByBuiltType = (type?: number) => {
+  switch (type) {
+    case 1:
+      return 0xf59e0b; // Amber/Orange (Residential)
+    case 2:
+      return 0x10b981; // Green (Park/Green)
     default:
-      return 0x3b82f6; // Default Blue
+      return 0x4b5563; // Default Gray
   }
 };
 
@@ -62,12 +59,21 @@ export default function Viewport3D({
   isForceWhite,
   standardView,
   onStandardViewProcessed,
-  onFaceHover,
-  onFaceClick,
+  onUnitHover,
+  onUnitClick,
   onLoadingChange
 }: Viewport3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  
+
+  const onUnitClickRef = useRef(onUnitClick);
+  const onUnitHoverRef = useRef(onUnitHover);
+
+  // Keep refs synchronized with props on every render
+  useEffect(() => {
+    onUnitClickRef.current = onUnitClick;
+    onUnitHoverRef.current = onUnitHover;
+  });
+
   // Three.js instances
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -75,10 +81,10 @@ export default function Viewport3D({
   const controlsRef = useRef<OrbitControls | null>(null);
   const backgroundGroupRef = useRef<THREE.Group | null>(null);
   const topologyGroupRef = useRef<THREE.Group | null>(null);
-  
-  // Interactive / Hover references
   const hoveredMeshRef = useRef<THREE.Mesh | null>(null);
-  const hoveredFaceIdRef = useRef<number | null>(null);
+
+  // Interactive / Hover references
+  const hoveredFaceIdRef = useRef<string | null>(null); // Hovered unit ID
   const raycasterRef = useRef(new THREE.Raycaster());
 
   // Cache last loaded model/grid names to prevent view reset on edits
@@ -184,18 +190,10 @@ export default function Viewport3D({
 
     const clearHoverState = () => {
       if (hoveredFaceIdRef.current !== null && hoveredMeshRef.current) {
-        const hitMesh = hoveredMeshRef.current;
-        const faceRanges = hitMesh.userData.faceRanges as {
-          id: number;
-          start: number;
-          count: number;
-          originalColor: THREE.Color;
-          originalOpacity: number;
-        }[];
-        const prevRange = faceRanges.find(r => r.id === hoveredFaceIdRef.current);
+        const prevRange = hoveredMeshRef.current.userData.faceRanges.find((r: any) => r.id === hoveredFaceIdRef.current);
         if (prevRange) {
           setRangeColor(
-            hitMesh.geometry,
+            hoveredMeshRef.current.geometry,
             prevRange.start,
             prevRange.count,
             prevRange.originalColor,
@@ -205,44 +203,38 @@ export default function Viewport3D({
       }
       hoveredFaceIdRef.current = null;
       hoveredMeshRef.current = null;
-      onFaceHover(null, 0, 0);
+      onUnitHoverRef.current(null, 0, 0);
     };
 
     // 9. Pointer Move (Hover) Handler
     const handlePointerMove = (event: PointerEvent) => {
       if (!topologyGroupRef.current || topologyGroupRef.current.children.length === 0) return;
-      
+
       const rect = renderer.domElement.getBoundingClientRect();
       const pointerX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       const pointerY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-      
+
       raycasterRef.current.setFromCamera(new THREE.Vector2(pointerX, pointerY), camera);
-      
+
       const intersects = raycasterRef.current.intersectObjects(topologyGroupRef.current.children, true);
       const hitRegion = intersects.find(item => item.object.userData.isRegion === true && item.faceIndex !== undefined);
 
       if (hitRegion && hitRegion.face) {
         const hitMesh = hitRegion.object as THREE.Mesh;
-        const faceRanges = hitMesh.userData.faceRanges as {
-          id: number;
-          start: number;
-          count: number;
-          originalColor: THREE.Color;
-          originalOpacity: number;
-        }[];
-        const facesData = hitMesh.userData.facesData as Face[];
-
+        const faceRanges = hitMesh.userData.faceRanges as any[];
         const vertexIndex = hitRegion.face.a;
         const hitRange = faceRanges.find(r => vertexIndex >= r.start && vertexIndex < r.start + r.count);
 
         if (hitRange) {
-          if (hoveredFaceIdRef.current !== hitRange.id) {
+          const targetUnitId = hitRange.id;
+
+          if (hoveredFaceIdRef.current !== targetUnitId) {
             // Restore previous hovered face's colors
-            if (hoveredFaceIdRef.current !== null) {
-              const prevRange = faceRanges.find(r => r.id === hoveredFaceIdRef.current);
+            if (hoveredFaceIdRef.current !== null && hoveredMeshRef.current) {
+              const prevRange = hoveredMeshRef.current.userData.faceRanges.find((r: any) => r.id === hoveredFaceIdRef.current);
               if (prevRange) {
                 setRangeColor(
-                  hitMesh.geometry,
+                  hoveredMeshRef.current.geometry,
                   prevRange.start,
                   prevRange.count,
                   prevRange.originalColor,
@@ -251,24 +243,27 @@ export default function Viewport3D({
               }
             }
 
-            // Highlight new hovered face (magenta color 0xec4899, alpha 0.85)
-            const highlightColor = new THREE.Color(0xec4899);
-            setRangeColor(
-              hitMesh.geometry,
-              hitRange.start,
-              hitRange.count,
-              highlightColor,
-              0.85
-            );
+            // Highlight new hovered unit (magenta color 0xec4899, alpha 0.85) in hitMesh
+            const currentRange = hitMesh.userData.faceRanges.find((r: any) => r.id === targetUnitId);
+            if (currentRange) {
+              const highlightColor = new THREE.Color(0xec4899);
+              setRangeColor(
+                hitMesh.geometry,
+                currentRange.start,
+                currentRange.count,
+                highlightColor,
+                0.85
+              );
+            }
 
-            hoveredFaceIdRef.current = hitRange.id;
+            hoveredFaceIdRef.current = targetUnitId;
             hoveredMeshRef.current = hitMesh;
           }
 
           // Trigger hover callback with updated mouse coordinates on every move
-          const faceData = facesData.find(f => f.id === hitRange.id);
-          if (faceData) {
-            onFaceHover(faceData, event.clientX, event.clientY);
+          const unitData = hitMesh.userData.unitsData.find((u: any) => u.id === targetUnitId);
+          if (unitData) {
+            onUnitHoverRef.current(unitData, event.clientX, event.clientY);
           }
           container.style.cursor = 'pointer';
         } else {
@@ -293,36 +288,31 @@ export default function Viewport3D({
     const handlePointerUpCoords = (event: PointerEvent) => {
       const diffX = Math.abs(event.clientX - pointerDownX);
       const diffY = Math.abs(event.clientY - pointerDownY);
-      
+
       // Only process click if the drag distance is small (not a camera rotation)
       if (diffX < 4 && diffY < 4) {
         if (!topologyGroupRef.current || topologyGroupRef.current.children.length === 0 || !cameraRef.current) return;
-        
+
         const rect = renderer.domElement.getBoundingClientRect();
         const pointerX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         const pointerY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        
+
         raycasterRef.current.setFromCamera(new THREE.Vector2(pointerX, pointerY), cameraRef.current);
-        
+
         const intersects = raycasterRef.current.intersectObjects(topologyGroupRef.current.children, true);
         const hitRegion = intersects.find(item => item.object.userData.isRegion === true && item.faceIndex !== undefined);
-        
+
         if (hitRegion && hitRegion.face) {
           const hitMesh = hitRegion.object as THREE.Mesh;
-          const faceRanges = hitMesh.userData.faceRanges as {
-            id: number;
-            start: number;
-            count: number;
-          }[];
-          const facesData = hitMesh.userData.facesData as Face[];
-
+          const faceRanges = hitMesh.userData.faceRanges as any[];
           const vertexIndex = hitRegion.face.a;
           const hitRange = faceRanges.find(r => vertexIndex >= r.start && vertexIndex < r.start + r.count);
 
           if (hitRange) {
-            const faceData = facesData.find(f => f.id === hitRange.id);
-            if (faceData) {
-              onFaceClick(faceData);
+            const targetUnitId = hitRange.id;
+            const unitData = hitMesh.userData.unitsData.find((u: any) => u.id === targetUnitId);
+            if (unitData) {
+              onUnitClickRef.current(unitData);
             }
           }
         }
@@ -358,7 +348,7 @@ export default function Viewport3D({
       renderer.domElement.removeEventListener('pointerdown', handlePointerDownCoords);
       renderer.domElement.removeEventListener('pointerup', handlePointerUpCoords);
       cancelAnimationFrame(animationFrameId);
-      
+
       gridHelper.dispose();
       xGeometry.dispose();
       xMaterial.dispose();
@@ -366,7 +356,7 @@ export default function Viewport3D({
       yMaterial.dispose();
       controls.dispose();
       renderer.dispose();
-      
+
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
@@ -469,7 +459,7 @@ export default function Viewport3D({
     while (backgroundGroup.children.length > 0) {
       backgroundGroup.remove(backgroundGroup.children[0]);
     }
-    
+
     const hasTopo = topologyGroupRef.current && topologyGroupRef.current.children.length > 0;
     if (!hasTopo) {
       fitCameraToAllUploaded();
@@ -545,9 +535,8 @@ export default function Viewport3D({
     if (!topologyGroup) return;
 
     // Reset hover states
-    hoveredMeshRef.current = null;
     hoveredFaceIdRef.current = null;
-    onFaceHover(null);
+    onUnitHover(null);
 
     topologyGroup.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
@@ -574,11 +563,13 @@ export default function Viewport3D({
 
     clearTopologyGroupObjects();
 
-    if (!data.faces || data.faces.length === 0) return;
+    if (!data.blocks || data.blocks.length === 0) return;
 
     const uniqueVertices = new Map<string, THREE.Vector3>();
-    const faceGeometries: THREE.BufferGeometry[] = [];
-    const faceRanges: {
+
+    // 1. Construct Block geometries (flat faces)
+    const blockGeometries: THREE.BufferGeometry[] = [];
+    const blockRanges: {
       id: number;
       start: number;
       count: number;
@@ -586,10 +577,10 @@ export default function Viewport3D({
       originalOpacity: number;
     }[] = [];
 
-    let currentVertexOffset = 0;
+    let currentBlockVertexOffset = 0;
 
-    data.faces.forEach((face) => {
-      const boundary = face.boundary_polyline;
+    data.blocks.forEach((block) => {
+      const boundary = block.boundary;
       if (boundary && boundary.length > 2) {
         const shape = new THREE.Shape();
         shape.moveTo(boundary[0][0], boundary[0][1]);
@@ -598,17 +589,8 @@ export default function Viewport3D({
         }
         shape.closePath();
 
-        const height = (face.state?.height_floors ?? 0) * 3;
-        let geometry: THREE.BufferGeometry;
-        if (height > 0) {
-          geometry = new THREE.ExtrudeGeometry(shape, {
-            depth: height,
-            bevelEnabled: false
-          });
-        } else {
-          geometry = new THREE.ShapeGeometry(shape);
-          geometry.translate(0, 0, 0.02);
-        }
+        let geometry: THREE.BufferGeometry = new THREE.ShapeGeometry(shape);
+        geometry.translate(0, 0, 0.02);
 
         if (geometry.index !== null) {
           const nonIndexedGeometry = geometry.toNonIndexed();
@@ -616,10 +598,10 @@ export default function Viewport3D({
           geometry = nonIndexedGeometry;
         }
 
-        const colorHex = getColorByBuiltType(face.state?.built_type, face.state?.is_occupied);
+        const colorHex = 0x4b5563; // Unoccupied default gray for blocks
         const color = new THREE.Color(colorHex);
-        const opacity = height > 0 ? 0.65 : 0.15;
-        
+        const opacity = 0.15;
+
         const count = geometry.attributes.position.count;
         const colors = new Float32Array(count * 4);
         for (let i = 0; i < count; i++) {
@@ -630,16 +612,16 @@ export default function Viewport3D({
         }
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
 
-        faceGeometries.push(geometry);
-        faceRanges.push({
-          id: face.id,
-          start: currentVertexOffset,
+        blockGeometries.push(geometry);
+        blockRanges.push({
+          id: block.id,
+          start: currentBlockVertexOffset,
           count: count,
           originalColor: color,
           originalOpacity: opacity
         });
 
-        currentVertexOffset += count;
+        currentBlockVertexOffset += count;
 
         boundary.forEach((p) => {
           const key = `${p[0].toFixed(2)},${p[1].toFixed(2)},${p[2].toFixed(2)}`;
@@ -650,10 +632,9 @@ export default function Viewport3D({
       }
     });
 
-    if (faceGeometries.length > 0) {
-      const mergedGeometry = BufferGeometryUtils.mergeGeometries(faceGeometries, false);
-      if (mergedGeometry) {
-        // Transparent standard material for faces with polygon offset and depthWrite disabled
+    if (blockGeometries.length > 0) {
+      const mergedBlockGeometry = BufferGeometryUtils.mergeGeometries(blockGeometries, false);
+      if (mergedBlockGeometry) {
         const material = new THREE.MeshStandardMaterial({
           vertexColors: true,
           roughness: 0.4,
@@ -666,43 +647,205 @@ export default function Viewport3D({
           polygonOffsetUnits: 1
         });
 
-        const mesh = new THREE.Mesh(mergedGeometry, material);
-        mesh.userData = {
-          isRegion: true,
-          faceRanges: faceRanges,
-          name: "Topology Grid Mesh",
-          facesData: data.faces
+        const blockMesh = new THREE.Mesh(mergedBlockGeometry, material);
+        blockMesh.userData = {
+          isBlock: true,
+          faceRanges: blockRanges,
+          name: "Topology Block Mesh",
+          blocksData: data.blocks
         };
-        topologyGroup.add(mesh);
+        topologyGroup.add(blockMesh);
       }
     }
 
-    const allOutlinePoints: THREE.Vector3[] = [];
-    data.faces.forEach((face) => {
-      const boundary = face.boundary_polyline;
-      if (boundary && boundary.length > 2) {
-        const height = (face.state?.height_floors ?? 0) * 3;
+    // 2. Construct Unit geometries (extruded buildings)
+    const occupiedGeometries: THREE.BufferGeometry[] = [];
+    const emptyGeometries: THREE.BufferGeometry[] = [];
+    
+    const occupiedRanges: {
+      id: string; // unit ID
+      start: number;
+      count: number;
+      originalColor: THREE.Color;
+      originalOpacity: number;
+    }[] = [];
 
+    const emptyRanges: {
+      id: string; // unit ID
+      start: number;
+      count: number;
+      originalColor: THREE.Color;
+      originalOpacity: number;
+    }[] = [];
+
+    const occupiedUnitsData: UrbanUnit[] = [];
+    const emptyUnitsData: UrbanUnit[] = [];
+
+    let occupiedVertexOffset = 0;
+    let emptyVertexOffset = 0;
+
+    data.units.forEach((unit) => {
+      const boundary = unit.boundary;
+      if (boundary && boundary.length > 2 && unit.height > 0) {
+        const shape = new THREE.Shape();
+        shape.moveTo(boundary[0][0], boundary[0][1]);
+        for (let i = 1; i < boundary.length; i++) {
+          shape.lineTo(boundary[i][0], boundary[i][1]);
+        }
+        shape.closePath();
+
+        const height = unit.height * 4; // floors * floor_height (default 4)
+        let geometry: THREE.BufferGeometry = new THREE.ExtrudeGeometry(shape, {
+          depth: height,
+          bevelEnabled: false
+        });
+
+        if (geometry.index !== null) {
+          const nonIndexedGeometry = geometry.toNonIndexed();
+          geometry.dispose();
+          geometry = nonIndexedGeometry;
+        }
+
+        const count = geometry.attributes.position.count;
+        const colors = new Float32Array(count * 4);
+
+        if (unit.type !== 0) {
+          const colorHex = getColorByBuiltType(unit.type);
+          const color = new THREE.Color(colorHex);
+          const opacity = 1.0;
+          for (let i = 0; i < count; i++) {
+            colors[i * 4] = color.r;
+            colors[i * 4 + 1] = color.g;
+            colors[i * 4 + 2] = color.b;
+            colors[i * 4 + 3] = opacity;
+          }
+          geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+          
+          occupiedGeometries.push(geometry);
+          occupiedRanges.push({
+            id: unit.id,
+            start: occupiedVertexOffset,
+            count: count,
+            originalColor: color,
+            originalOpacity: opacity
+          });
+          occupiedUnitsData.push(unit);
+          occupiedVertexOffset += count;
+        } else {
+          const colorHex = 0xffffff;
+          const color = new THREE.Color(colorHex);
+          const opacity = 0.35;
+          for (let i = 0; i < count; i++) {
+            colors[i * 4] = color.r;
+            colors[i * 4 + 1] = color.g;
+            colors[i * 4 + 2] = color.b;
+            colors[i * 4 + 3] = opacity;
+          }
+          geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+
+          emptyGeometries.push(geometry);
+          emptyRanges.push({
+            id: unit.id,
+            start: emptyVertexOffset,
+            count: count,
+            originalColor: color,
+            originalOpacity: opacity
+          });
+          emptyUnitsData.push(unit);
+          emptyVertexOffset += count;
+        }
+      }
+    });
+
+    if (occupiedGeometries.length > 0) {
+      const mergedOccupiedGeometry = BufferGeometryUtils.mergeGeometries(occupiedGeometries, false);
+      if (mergedOccupiedGeometry) {
+        const material = new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          roughness: 0.4,
+          metalness: 0.2,
+          transparent: false,
+          side: THREE.DoubleSide,
+          depthWrite: true,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1
+        });
+
+        const occupiedMesh = new THREE.Mesh(mergedOccupiedGeometry, material);
+        occupiedMesh.userData = {
+          isRegion: true,
+          isUnit: true,
+          isOccupied: true,
+          faceRanges: occupiedRanges,
+          name: "Topology Occupied Unit Mesh",
+          unitsData: occupiedUnitsData
+        };
+        topologyGroup.add(occupiedMesh);
+      }
+    }
+
+    if (emptyGeometries.length > 0) {
+      const mergedEmptyGeometry = BufferGeometryUtils.mergeGeometries(emptyGeometries, false);
+      if (mergedEmptyGeometry) {
+        const material = new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          roughness: 0.4,
+          metalness: 0.2,
+          transparent: true,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1
+        });
+
+        const emptyMesh = new THREE.Mesh(mergedEmptyGeometry, material);
+        emptyMesh.userData = {
+          isRegion: true,
+          isUnit: true,
+          isEmpty: true,
+          faceRanges: emptyRanges,
+          name: "Topology Empty Unit Mesh",
+          unitsData: emptyUnitsData
+        };
+        topologyGroup.add(emptyMesh);
+      }
+    }
+
+    // 3. Draw outlines
+    const allOutlinePoints: THREE.Vector3[] = [];
+
+    // Draw outlines for blocks
+    data.blocks.forEach((block) => {
+      const boundary = block.boundary;
+      if (boundary && boundary.length > 2) {
         for (let i = 0; i < boundary.length; i++) {
           const p1 = boundary[i];
           const p2 = boundary[(i + 1) % boundary.length];
           allOutlinePoints.push(new THREE.Vector3(p1[0], p1[1], p1[2] + 0.01));
           allOutlinePoints.push(new THREE.Vector3(p2[0], p2[1], p2[2] + 0.01));
         }
+      }
+    });
 
-        if (height > 0) {
-          for (let i = 0; i < boundary.length; i++) {
-            const p1 = boundary[i];
-            const p2 = boundary[(i + 1) % boundary.length];
-            allOutlinePoints.push(new THREE.Vector3(p1[0], p1[1], p1[2] + height + 0.01));
-            allOutlinePoints.push(new THREE.Vector3(p2[0], p2[1], p2[2] + height + 0.01));
-          }
+    // Draw outlines for units
+    data.units.forEach((unit) => {
+      const boundary = unit.boundary;
+      if (boundary && boundary.length > 2 && unit.height > 0) {
+        const height = unit.height * 4;
 
-          boundary.forEach((p) => {
-            allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + 0.01));
-            allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + height + 0.01));
-          });
+        for (let i = 0; i < boundary.length; i++) {
+          const p1 = boundary[i];
+          const p2 = boundary[(i + 1) % boundary.length];
+          allOutlinePoints.push(new THREE.Vector3(p1[0], p1[1], p1[2] + height + 0.01));
+          allOutlinePoints.push(new THREE.Vector3(p2[0], p2[1], p2[2] + height + 0.01));
         }
+
+        boundary.forEach((p) => {
+          allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + 0.01));
+          allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + height + 0.01));
+        });
       }
     });
 
@@ -718,6 +861,7 @@ export default function Viewport3D({
       topologyGroup.add(lines);
     }
 
+    // 4. Draw vertices as spheres
     const sphereGeoms: THREE.BufferGeometry[] = [];
     const sphereMaterial = new THREE.MeshStandardMaterial({
       color: 0x4f46e5,
@@ -856,9 +1000,9 @@ export default function Viewport3D({
   }, [standardView]);
 
   return (
-    <div 
-      ref={containerRef} 
-      className="absolute inset-0 w-full h-full z-0 cursor-grab active:cursor-grabbing" 
+    <div
+      ref={containerRef}
+      className="absolute inset-0 w-full h-full z-0 cursor-grab active:cursor-grabbing"
     />
   );
 }

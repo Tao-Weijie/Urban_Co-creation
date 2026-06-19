@@ -2,9 +2,11 @@
 
 import React, { useState } from 'react';
 import {
-  Face,
+  Block,
+  UrbanUnit,
   TopologyData,
-  TopologyMetadata
+  TopologyMetadata,
+  ActionType
 } from '@/rules/topology';
 
 import Viewport3D from '@/components/3DViewport';
@@ -12,6 +14,7 @@ import LeftBar from '@/components/LeftBar';
 import HoverPanel from '@/components/HoverPanel';
 import BottomBar from '@/components/BottomBar';
 import EditFaceModal from '@/components/EditFaceModal';
+import GameActionModal from '@/components/GameActionModal';
 
 export default function Home() {
   // Theme state
@@ -43,22 +46,51 @@ export default function Home() {
 
   // Active loaded topology data and stats
   const [topologyData, setTopologyData] = useState<TopologyData | null>(null);
+  const [originalTopologyData, setOriginalTopologyData] = useState<TopologyData | null>(null);
   const [macroStats, setMacroStats] = useState({
     government_tax: 0,
     developer_profit: 0,
     total_population: 0
   });
 
+  // Game States
+  const [gameStarted, setGameStarted] = useState<boolean>(false);
+  const [turnOrder, setTurnOrder] = useState<(string | number)[]>([]);
+  const [activeRoleIndex, setActiveRoleIndex] = useState<number>(0);
+  const [turnNumber, setTurnNumber] = useState<number>(1);
+  const [rolesConfig, setRolesConfig] = useState<Record<string, { name: string; allowed_types: number[]; allowed_actions: (string | number)[] }>>({});
+
   // UI Interactive States
-  const [hoveredFaceInfo, setHoveredFaceInfo] = useState<Face | null>(null);
+  const [hoveredUnitInfo, setHoveredUnitInfo] = useState<UrbanUnit | null>(null);
   const [hoverPosition, setHoverPosition] = useState<{ x: number, y: number } | null>(null);
-  const [selectedFaceForEdit, setSelectedFaceForEdit] = useState<Face | null>(null);
+  const [selectedUnitForEdit, setSelectedUnitForEdit] = useState<UrbanUnit | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
+  const [selectedUnitForGameAction, setSelectedUnitForGameAction] = useState<UrbanUnit | null>(null);
+  const [isGameActionModalOpen, setIsGameActionModalOpen] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    const fetchRoles = async () => {
+      try {
+        const response = await fetch('/api/game/players');
+        if (response.ok) {
+          const data = await response.json();
+          setRolesConfig(data);
+          if (turnOrder.length === 0) {
+            const keys = Object.keys(data).map(k => isNaN(Number(k)) ? k : Number(k));
+            setTurnOrder(keys);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch roles config:", err);
+      }
+    };
+    fetchRoles();
+  }, []);
 
   // Hover position helper
-  const handleFaceHover = (face: Face | null, x?: number, y?: number) => {
-    setHoveredFaceInfo(face);
-    if (face && x !== undefined && y !== undefined) {
+  const handleUnitHover = (unit: UrbanUnit | null, x?: number, y?: number) => {
+    setHoveredUnitInfo(unit);
+    if (unit && x !== undefined && y !== undefined) {
       setHoverPosition({ x, y });
     } else {
       setHoverPosition(null);
@@ -83,16 +115,67 @@ export default function Home() {
     setModelName('');
   };
 
+  // Helper to strip boundary coordinates before sending to backend
+  const stripBoundaries = (data: TopologyData) => {
+    return {
+      blocks: data.blocks.map(({ id, neighbor }) => ({ id, neighbor })),
+      units: data.units.map(({ id, parentid, type, value, population, height }) => ({
+        id, parentid, type, value, population, height
+      })),
+      timer: data.metadata?.timer || 0,
+      metadata: data.metadata || {}
+    };
+  };
+
+  // Helper to merge boundaries back from local data cache
+  const mergeBoundaries = (response: any, localData: TopologyData): TopologyData => {
+    const blocks = response.blocks ? response.blocks.map((b: any) => {
+      const localBlock = localData.blocks.find(lb => lb.id === b.id);
+      return {
+        ...b,
+        boundary: localBlock ? localBlock.boundary : []
+      };
+    }) : localData.blocks;
+
+    const units = response.units ? response.units.map((u: any) => {
+      const localUnit = localData.units.find(lu => lu.id === u.id);
+      if (localUnit) {
+        return {
+          ...u,
+          boundary: localUnit.boundary
+        };
+      } else {
+        const parentBlock = localData.blocks.find(lb => lb.id === u.parentid);
+        return {
+          ...u,
+          boundary: parentBlock ? parentBlock.boundary : []
+        };
+      }
+    }) : localData.units;
+
+    return {
+      metadata: {
+        ...localData.metadata,
+        ...response.metadata,
+        timer: response.metadata?.timer !== undefined ? response.metadata.timer : (response.timer !== undefined ? response.timer : (localData.metadata?.timer || 0))
+      },
+      blocks,
+      units
+    };
+  };
+
   // Run urban economics evaluation and set results in state
-  const runEvaluation = async (faces: Face[], currentGridName: string, metadata?: TopologyMetadata) => {
+  const runEvaluation = async (currentTopology: TopologyData, currentGridName: string, metadata?: TopologyMetadata) => {
     try {
       setIsLoading(true);
-      const response = await fetch('/api/evaluate', {
+      const strippedPayload = stripBoundaries(currentTopology);
+
+      const response = await fetch('/api/game/build', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ faces }),
+        body: JSON.stringify(strippedPayload),
       });
 
       if (!response.ok) {
@@ -103,17 +186,17 @@ export default function Home() {
       const data = await response.json();
 
       setMacroStats({
-        government_tax: data.government_tax,
-        developer_profit: data.developer_profit,
-        total_population: data.total_population
+        government_tax: data.metadata?.evaulate?.government_tax || 0,
+        developer_profit: data.metadata?.evaulate?.developer_profit || 0,
+        total_population: data.metadata?.evaulate?.total_population || 0
       });
 
-      const updatedTopology: TopologyData = {
-        metadata: metadata || topologyData?.metadata || { map_id: "urban_map", total_faces: faces.length },
-        faces: data.faces
-      };
+      const mergedTopology = mergeBoundaries(data, currentTopology);
+      if (metadata) {
+        mergedTopology.metadata = metadata;
+      }
 
-      setTopologyData(updatedTopology);
+      setTopologyData(mergedTopology);
     } catch (err: any) {
       console.error("Failed to run urban economics evaluation:", err);
       alert("Evaluation Error: " + err.message);
@@ -146,15 +229,48 @@ export default function Home() {
 
         const decoder = new TextDecoder(encoding);
         const text = decoder.decode(uint8Array);
-        const json = JSON.parse(text);
+        const json = JSON.parse(text) as TopologyData;
 
-        if (json.faces) {
+        if (json.blocks) {
+          let units = json.units || [];
+          json.blocks.forEach((block: Block) => {
+            const hasUnit = units.some((u: any) => u.parentid === block.id);
+            if (!hasUnit) {
+              units.push({
+                id: block.id,
+                parentid: block.id,
+                type: 0, // EMPTY
+                value: 0.0,
+                population: 0.0,
+                boundary: block.boundary,
+                height: 1 // default height 1
+              });
+            }
+          });
+
+          // Ensure all type 0 units have 0 value, 0 population, and default height 1 if empty
+          units = units.map((u: any) => {
+            if (u.type === 0) {
+              return { ...u, value: 0.0, population: 0.0, height: u.height || 1 };
+            }
+            return u;
+          });
+
+          const completeJson: TopologyData = {
+            metadata: json.metadata || { map_id: "urban_map", total_faces: json.blocks.length, timer: 0 },
+            blocks: json.blocks,
+            units
+          };
+
           setGridName(file.name);
-          runEvaluation(json.faces, file.name, json.metadata);
+          setOriginalTopologyData(completeJson);
+          runEvaluation(completeJson, file.name, completeJson.metadata);
+        } else {
+          alert("Failed to parse grid JSON. Missing required 'blocks' property.");
         }
       } catch (err) {
         console.error(err);
-        alert("Failed to parse grid JSON. Ensure it strictly matches topology specifications.");
+        alert("Failed to parse grid JSON. Ensure it matches topology specifications.");
       }
       setIsLoading(false);
     };
@@ -164,8 +280,9 @@ export default function Home() {
   // Clear topology grid 3D objects and reset states
   const clearTopologyGrid = () => {
     setTopologyData(null);
+    setOriginalTopologyData(null);
     setGridName('');
-    setHoveredFaceInfo(null);
+    setHoveredUnitInfo(null);
     setMacroStats({
       government_tax: 0,
       developer_profit: 0,
@@ -173,36 +290,188 @@ export default function Home() {
     });
   };
 
-  // Save modifications to the selected face and trigger evaluation update
-  const handleSaveFaceEdit = (editBuiltType: string) => {
-    if (!selectedFaceForEdit || !topologyData) return;
+  const handleSwapOrder = () => {
+    setTurnOrder((prev) => prev.length > 1 ? [...prev.slice(1), prev[0]] : prev);
+  };
+
+  const handleStartGame = async () => {
+    if (!topologyData) {
+      alert("Please upload a topology grid JSON first.");
+      return;
+    }
+    try {
+      setIsLoading(true);
+      const strippedPayload = stripBoundaries(topologyData);
+
+      const response = await fetch('/api/game/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          player_order: turnOrder
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText);
+      }
+
+      const data = await response.json();
+
+      // Update states and metrics
+      setMacroStats({
+        government_tax: data.metadata?.evaulate?.government_tax || 0,
+        developer_profit: data.metadata?.evaulate?.developer_profit || 0,
+        total_population: data.metadata?.evaulate?.total_population || 0
+      });
+
+      const mergedTopology = mergeBoundaries(data, topologyData);
+      setTopologyData(mergedTopology);
+
+      // Sync game state from backend metadata
+      const backendMeta = data.metadata || {};
+      setGameStarted(backendMeta.game_started || true);
+      if (backendMeta.player_order) {
+        setTurnOrder(backendMeta.player_order);
+      }
+      setActiveRoleIndex(0);
+      setTurnNumber((data.metadata?.timer !== undefined ? data.metadata.timer : (data.timer || 0)) + 1);
+
+    } catch (err: any) {
+      console.error("Failed to start game:", err);
+      alert("Start Game Error: " + err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResetGame = () => {
+    setGameStarted(false);
+    setActiveRoleIndex(0);
+    setTurnNumber(1);
+    const initialKeys = Object.keys(rolesConfig).map(k => isNaN(Number(k)) ? k : Number(k));
+    setTurnOrder(initialKeys.length > 0 ? initialKeys : [1, 2]);
+    if (originalTopologyData) {
+      const resetCopy = JSON.parse(JSON.stringify(originalTopologyData));
+      if (resetCopy.metadata) {
+        resetCopy.metadata.game_started = false;
+        delete resetCopy.metadata.player_order;
+        delete resetCopy.metadata.next_player;
+        delete resetCopy.metadata.valid_action;
+        delete resetCopy.metadata.valid_type;
+      }
+      setTopologyData(resetCopy);
+      runEvaluation(resetCopy, gridName, resetCopy.metadata);
+    } else {
+      clearTopologyGrid();
+    }
+  };
+
+  const handleSelectGameAction = (actionType: ActionType.PLACE | ActionType.REPLACE) => {
+    if (selectedUnitForGameAction) {
+      handlePlayTurn(actionType, selectedUnitForGameAction.id);
+      setIsGameActionModalOpen(false);
+      setSelectedUnitForGameAction(null);
+    }
+  };
+
+  const handlePlayTurn = async (actionType: ActionType, unitId?: number) => {
+    if (!topologyData) return;
+
+    try {
+      setIsLoading(true);
+      const currentRole = turnOrder[activeRoleIndex];
+
+      const activeRoleVal = turnOrder[activeRoleIndex];
+      const allowedBuildings = rolesConfig[String(activeRoleVal)]?.allowed_types || [];
+      const unitType = allowedBuildings.length > 0 ? allowedBuildings[0] : null;
+
+      const response = await fetch('/api/game/step', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action_type: actionType,
+          unit_id: unitId ?? null,
+          unit_type: unitType
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText);
+      }
+
+      const data = await response.json();
+
+      // Update states
+      setMacroStats({
+        government_tax: data.metadata?.evaulate?.government_tax || 0,
+        developer_profit: data.metadata?.evaulate?.developer_profit || 0,
+        total_population: data.metadata?.evaulate?.total_population || 0
+      });
+
+      const mergedTopology = mergeBoundaries(data, topologyData);
+      setTopologyData(mergedTopology);
+
+      // Sync game state from backend metadata
+      const backendMeta = data.metadata || {};
+      if (backendMeta.player_order) {
+        setTurnOrder(backendMeta.player_order);
+      }
+      setActiveRoleIndex(0);
+      setTurnNumber((data.metadata?.timer !== undefined ? data.metadata.timer : (data.timer || 0)) + 1);
+
+    } catch (err: any) {
+      console.error("Failed to execute game turn step:", err);
+      alert("Game Turn Error: " + err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSkipTurn = () => {
+    handlePlayTurn(ActionType.SKIP);
+  };
+
+  // Save modifications to the selected unit and trigger evaluation update
+  const handleSaveUnitEdit = (editBuiltType: string) => {
+    if (!selectedUnitForEdit || !topologyData) return;
 
     const isOccupied = editBuiltType !== 'empty';
-    const heightFloors = isOccupied ? 1 : 0;
+    let typeVal = 0;
+    if (editBuiltType === 'residential') typeVal = 1;
+    else if (editBuiltType === 'green' || editBuiltType === 'park') typeVal = 2;
 
-    const updatedFaces = topologyData.faces.map((f) => {
-      if (f.id === selectedFaceForEdit.id) {
+    const updatedUnits = topologyData.units.map(u => {
+      if (u.id === selectedUnitForEdit.id) {
         return {
-          ...f,
-          state: {
-            ...f.state,
-            built_type: editBuiltType,
-            is_occupied: isOccupied,
-            height_floors: heightFloors
-          }
+          ...u,
+          type: typeVal,
+          value: isOccupied ? u.value : 0.0,
+          population: isOccupied ? u.population : 0.0,
+          height: u.height
         };
       }
-      return f;
+      return u;
     });
 
-    runEvaluation(updatedFaces, gridName);
+    const updatedTopology = {
+      ...topologyData,
+      units: updatedUnits
+    };
+
+    runEvaluation(updatedTopology, gridName);
     setIsEditModalOpen(false);
 
-    // Update the hover info if the currently hovered face was the edited one
-    if (hoveredFaceInfo && hoveredFaceInfo.id === selectedFaceForEdit.id) {
-      const updatedFace = updatedFaces.find(f => f.id === selectedFaceForEdit.id);
-      if (updatedFace) {
-        setHoveredFaceInfo(updatedFace);
+    // Update the hover info if the currently hovered unit was the edited one
+    if (hoveredUnitInfo && hoveredUnitInfo.id === selectedUnitForEdit.id) {
+      const updatedUnit = updatedUnits.find(u => u.id === selectedUnitForEdit.id);
+      if (updatedUnit) {
+        setHoveredUnitInfo(updatedUnit);
       }
     }
   };
@@ -219,10 +488,15 @@ export default function Home() {
         isForceWhite={isForceWhite}
         standardView={standardView}
         onStandardViewProcessed={() => setStandardView(null)}
-        onFaceHover={handleFaceHover}
-        onFaceClick={(face) => {
-          setSelectedFaceForEdit(face);
-          setIsEditModalOpen(true);
+        onUnitHover={handleUnitHover}
+        onUnitClick={(unit) => {
+          if (gameStarted) {
+            setSelectedUnitForGameAction(unit);
+            setIsGameActionModalOpen(true);
+          } else {
+            setSelectedUnitForEdit(unit);
+            setIsEditModalOpen(true);
+          }
         }}
         onLoadingChange={setIsLoading}
       />
@@ -240,23 +514,66 @@ export default function Home() {
         onJsonClear={clearTopologyGrid}
         onToggleForceWhite={() => setIsForceWhite(!isForceWhite)}
         hasTopologyData={topologyData !== null}
+
+        // Game Mode props
+        gameStarted={gameStarted}
+        turnOrder={turnOrder}
+        activeRoleIndex={activeRoleIndex}
+        turnNumber={turnNumber}
+        onStartGame={handleStartGame}
+        onResetGame={handleResetGame}
+        onUpdateTurnOrder={setTurnOrder}
+        onSkipTurn={handleSkipTurn}
+        rolesConfig={rolesConfig}
       />
 
       {/* Hover Information Panel (Follows cursor) */}
       {!isEditModalOpen && (
-        <HoverPanel hoveredFaceInfo={hoveredFaceInfo} hoverPosition={hoverPosition} />
+        <HoverPanel hoveredUnitInfo={hoveredUnitInfo} hoverPosition={hoverPosition} topologyData={topologyData} />
       )}
 
       {/* Standard Views Selector (Bottom Center) */}
       <BottomBar onSetView={setStandardView} theme={theme} onToggleTheme={handleToggleTheme} />
 
-      {/* Edit Face Properties Modal Popup */}
+      {/* Edit Unit Properties Modal Popup */}
       <EditFaceModal
         isOpen={isEditModalOpen}
-        face={selectedFaceForEdit}
+        unit={selectedUnitForEdit}
+        currentBuiltType={
+          selectedUnitForEdit
+            ? (selectedUnitForEdit.type === 1
+              ? 'residential'
+              : (selectedUnitForEdit.type === 2
+                ? 'green'
+                : 'empty'))
+            : 'empty'
+        }
         onClose={() => setIsEditModalOpen(false)}
-        onSave={handleSaveFaceEdit}
+        onSave={handleSaveUnitEdit}
       />
+
+      {/* Game Action Modal Popup */}
+      {(() => {
+        const activeRoleVal = topologyData?.metadata?.next_player ?? turnOrder[activeRoleIndex] ?? 1;
+        const allowedBehavior = topologyData?.metadata?.valid_action ?? [];
+        const allowedBuildings = topologyData?.metadata?.valid_type ?? [];
+        const roleName = rolesConfig[String(activeRoleVal)]?.name ?? (activeRoleVal === 1 ? "Developer" : "Government");
+        return (
+          <GameActionModal
+            isOpen={isGameActionModalOpen}
+            unit={selectedUnitForGameAction}
+            activeRole={activeRoleVal}
+            allowedBehavior={allowedBehavior}
+            allowedBuildings={allowedBuildings}
+            roleName={roleName}
+            onClose={() => {
+              setIsGameActionModalOpen(false);
+              setSelectedUnitForGameAction(null);
+            }}
+            onSelectAction={handleSelectGameAction}
+          />
+        );
+      })()}
 
     </div>
   );
