@@ -137,7 +137,7 @@ class GameEngine:
     @staticmethod
     def evaluate(graph: UrbanGraph) -> dict:
         """
-        Performs the urban economy metrics calculations on the graph.
+        Performs the urban economics metrics calculations on the graph.
         Updates value and population in-place for all units.
         Returns a dict of metrics (government_tax, developer_profit, total_population).
         """
@@ -149,43 +149,49 @@ class GameEngine:
                 block_to_units[pid] = []
             block_to_units[pid].append(u)
 
-        # Calculate value score for all residential units
+        # Calculate value score for all units
         for u in graph.units:
-            if u.type != UnitType.RESIDENTIAL:
-                u.value = 0.0
-                continue
-                
-            value = 40.0  # Base value baseline score
-            
             pid = str(u.parentid)
             same_block_units = block_to_units.get(pid, [])
             
-            # Check impact from other units in the SAME block (influence factor: 1.0)
-            total_green_floors = sum(ou.height for ou in same_block_units if ou.type == UnitType.GREEN)
-            total_residential_floors = sum(ou.height for ou in same_block_units if ou.type == UnitType.RESIDENTIAL)
+            # Check impact from other units in the SAME block (count units, ignore height)
+            total_green_units = sum(1 for ou in same_block_units if ou.type == UnitType.GREEN)
+            total_residential_units = sum(1 for ou in same_block_units if ou.type == UnitType.RESIDENTIAL)
             
-            value += 25.0 * 1.0 * total_green_floors
-            value -= 5.0 * 1.0 * (total_residential_floors - 1)
-            
-            # Check impact from units in NEIGHBOR blocks (influence factor: 0.5)
+            # Check impact from units in NEIGHBOR blocks (count units, ignore height)
+            neighbor_green_units = 0
+            neighbor_res_units = 0
             neighbors = graph.get_neighbors(u.parentid)
             for neighbor_id in neighbors:
                 neighbor_units = block_to_units.get(str(neighbor_id), [])
-                n_green = sum(nu.height for nu in neighbor_units if nu.type == UnitType.GREEN)
-                n_res = sum(nu.height for nu in neighbor_units if nu.type == UnitType.RESIDENTIAL)
+                neighbor_green_units += sum(1 for nu in neighbor_units if nu.type == UnitType.GREEN)
+                neighbor_res_units += sum(1 for nu in neighbor_units if nu.type == UnitType.RESIDENTIAL)
                 
-                value += 25.0 * 0.5 * n_green
-                value -= 5.0 * 0.5 * n_res
-                
-            u.value = max(10.0, min(100.0, value))
+            # residential density penalty ignores the unit u itself if u is residential
+            u_count_to_subtract = 1 if u.type == UnitType.RESIDENTIAL else 0
+            
+            # Diminishing returns greenery effect (decay factor 0.5 on the outside of sqrt)
+            value_green = 40.0 * math.sqrt(total_green_units) + 20.0 * math.sqrt(neighbor_green_units)
+            
+            # Crowding penalty (decay factor 0.5 on the outside of neighbor counts)
+            r_same = total_residential_units - u_count_to_subtract
+            value_penalty = 6.0 * r_same + 3.0 * neighbor_res_units
 
-        # Calculate population based on normal distribution
+            
+            # Base value = 30.0, floor value = 15.0
+            u.value = max(15.0, min(100.0, 30.0 + value_green - value_penalty))
+
+
+        # Calculate population and financial indicators
         mu = 60.0       # Golden price point for population
         sigma = 20.0    # Sensitivity coefficient
         P_max = 150.0   # Maximum population capacity per floor
         
         total_city_population = 0
-        total_developer_profit = 0
+        total_developer_revenue = 0
+        total_developer_cost = 0
+        total_land_price = 0
+        total_tax_revenue = 0
         
         for u in graph.units:
             if u.type == UnitType.RESIDENTIAL:
@@ -195,16 +201,24 @@ class GameEngine:
                 u.population = float(rounded_pop)
                 
                 total_city_population += rounded_pop
-                total_developer_profit += rounded_pop * v
+                
+                # Gross Revenue: Population * Land Value * 0.5
+                total_developer_revenue += rounded_pop * v * 0.5
+                # Construction Cost: Removed
+                total_developer_cost += 0.0
+                # Land Price paid to Government: Value * height * 10.0
+                total_land_price += v * u.height * 10.0
+                # Tax Revenue paid to Government: Population * 10.0 (flat rate per person)
+                total_tax_revenue += rounded_pop * 10.0
             else:
                 u.population = 0.0
 
-        # Calculate total government tax
-        tax_rate = 0.5
-        total_government_tax = round(total_city_population * tax_rate)
+        developer_net_profit = round(total_developer_revenue - total_developer_cost - total_land_price, 1)
+        government_net_reserve = round(total_land_price + total_tax_revenue, 1)
         
         return {
-            "government_tax": int(total_government_tax),
-            "developer_profit": float(total_developer_profit),
+            "government_tax": int(round(government_net_reserve)),
+            "developer_profit": float(developer_net_profit),
             "total_population": int(total_city_population)
         }
+

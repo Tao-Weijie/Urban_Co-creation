@@ -11,10 +11,22 @@ import {
 
 import Viewport3D from '@/components/3DViewport';
 import LeftBar from '@/components/LeftBar';
+import RightBar from '@/components/RightBar';
 import HoverPanel from '@/components/HoverPanel';
 import BottomBar from '@/components/BottomBar';
 import EditFaceModal from '@/components/EditFaceModal';
 import GameActionModal from '@/components/GameActionModal';
+
+import {
+  trainRL,
+  saveRLModels,
+  loadRLModelFromSingleFile,
+  clearAllCachedModels,
+  getRLActionRecommendation,
+  RLTrainingMetrics
+} from '@/rules/training';
+import Script from 'next/script';
+import { pyodideEngine } from '@/rules/pyodideEngine';
 
 export default function Home() {
   // Theme state
@@ -43,9 +55,17 @@ export default function Home() {
   const [gridName, setGridName] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isForceWhite, setIsForceWhite] = useState<boolean>(false);
+  const [isModelLoading, setIsModelLoading] = useState<boolean>(false);
+  const [isMapLoading, setIsMapLoading] = useState<boolean>(false);
+  const [isPyodideLoading, setIsPyodideLoading] = useState<boolean>(true);
 
   // Active loaded topology data and stats
   const [topologyData, setTopologyData] = useState<TopologyData | null>(null);
+  const topologyDataRef = React.useRef<TopologyData | null>(null);
+  React.useEffect(() => {
+    topologyDataRef.current = topologyData;
+  }, [topologyData]);
+
   const [originalTopologyData, setOriginalTopologyData] = useState<TopologyData | null>(null);
   const [macroStats, setMacroStats] = useState({
     government_tax: 0,
@@ -68,24 +88,225 @@ export default function Home() {
   const [selectedUnitForGameAction, setSelectedUnitForGameAction] = useState<UrbanUnit | null>(null);
   const [isGameActionModalOpen, setIsGameActionModalOpen] = useState<boolean>(false);
 
+  // Role-based AI Settings
+  const [roleAISettings, setRoleAISettings] = useState<Record<string, boolean>>({
+    "1": false, // Developer
+    "2": false  // Government
+  });
+  const [isAiThinking, setIsAiThinking] = useState<boolean>(false);
+  const aiTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [isGameOver, setIsGameOver] = useState<boolean>(false);
+
+  // Game History for Timeline
+  const [gameHistory, setGameHistory] = useState<{
+    topologyData: TopologyData;
+    macroStats: {
+      government_tax: number;
+      developer_profit: number;
+      total_population: number;
+    };
+    activeRoleIndex: number;
+    turnNumber: number;
+    turnOrder: (string | number)[];
+  }[]>([]);
+  const [currentHistoryIndex, setCurrentHistoryIndex] = useState<number>(0);
+
+  // Displayed/Projected states matching the current timeline index (if browsing history)
+  const isBrowsingHistory = gameStarted && currentHistoryIndex < gameHistory.length - 1;
+
+  const displayedTopologyData = gameStarted && gameHistory[currentHistoryIndex]
+    ? gameHistory[currentHistoryIndex].topologyData
+    : topologyData;
+
+  const displayedMacroStats = gameStarted && gameHistory[currentHistoryIndex]
+    ? gameHistory[currentHistoryIndex].macroStats
+    : macroStats;
+
+  const displayedTurnNumber = gameStarted && gameHistory[currentHistoryIndex]
+    ? gameHistory[currentHistoryIndex].turnNumber
+    : turnNumber;
+
+  const displayedActiveRoleIndex = gameStarted && gameHistory[currentHistoryIndex]
+    ? gameHistory[currentHistoryIndex].activeRoleIndex
+    : activeRoleIndex;
+
+  const displayedTurnOrder = gameStarted && gameHistory[currentHistoryIndex]
+    ? gameHistory[currentHistoryIndex].turnOrder
+    : turnOrder;
+
+  const handleToggleRoleAI = (roleId: string) => {
+    setRoleAISettings(prev => ({
+      ...prev,
+      [roleId]: !prev[roleId]
+    }));
+  };
+
+  // DQN Reinforcement Learning Simulated States
+  const [isRlTraining, setIsRlTraining] = useState<boolean>(false);
+  const [rlProgress, setRlProgress] = useState<number>(0);
+  const [rlEpisode, setRlEpisode] = useState<number>(0);
+  const [rlLoss, setRlLoss] = useState<number | null>(null);
+  const [rlLossHistory, setRlLossHistory] = useState<number[]>([]);
+  const [rlMetrics, setRlMetrics] = useState<RLTrainingMetrics | null>(null);
+  const [isRlLoaded, setIsRlLoaded] = useState<boolean>(false);
+
+  // Timeline playback states
+  const [isTimelinePlaying, setIsTimelinePlaying] = useState<boolean>(false);
+  const [timelineFps, setTimelineFps] = useState<number>(5);
+  const timelineIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // Timeline Autoplay Loop Effect
   React.useEffect(() => {
-    const fetchRoles = async () => {
-      try {
-        const response = await fetch('/api/game/players');
-        if (response.ok) {
-          const data = await response.json();
-          setRolesConfig(data);
-          if (turnOrder.length === 0) {
-            const keys = Object.keys(data).map(k => isNaN(Number(k)) ? k : Number(k));
-            setTurnOrder(keys);
+    console.log("Timeline Autoplay Effect: playing =", isTimelinePlaying, "fps =", timelineFps);
+    if (isTimelinePlaying) {
+      if (timelineIntervalRef.current) clearInterval(timelineIntervalRef.current);
+      const delay = 1000 / timelineFps;
+      console.log(`Setting timeline interval with delay: ${delay}ms`);
+      timelineIntervalRef.current = setInterval(() => {
+        setCurrentHistoryIndex((prev) => {
+          if (prev >= gameHistory.length - 1) {
+            setIsTimelinePlaying(false);
+            return prev;
           }
-        }
-      } catch (err) {
-        console.error("Failed to fetch roles config:", err);
+          return prev + 1;
+        });
+      }, delay);
+    } else {
+      if (timelineIntervalRef.current) {
+        clearInterval(timelineIntervalRef.current);
+        timelineIntervalRef.current = null;
+      }
+    }
+    return () => {
+      if (timelineIntervalRef.current) {
+        clearInterval(timelineIntervalRef.current);
       }
     };
-    fetchRoles();
+  }, [isTimelinePlaying, timelineFps, gameHistory.length]);
+
+  React.useEffect(() => {
+    let checkInterval: NodeJS.Timeout;
+    const initPyodide = async () => {
+      try {
+        await pyodideEngine.init();
+        
+        // Fetch roles config from Pyodide
+        const roles = await pyodideEngine.initializePlayer();
+        setRolesConfig(roles);
+        if (turnOrder.length === 0) {
+          const keys = Object.keys(roles).map(k => isNaN(Number(k)) ? k : Number(k));
+          setTurnOrder(keys);
+        }
+        setIsPyodideLoading(false);
+      } catch (err) {
+        console.error("Pyodide init error:", err);
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      if ((window as any).loadPyodide) {
+        initPyodide();
+      } else {
+        checkInterval = setInterval(() => {
+          if ((window as any).loadPyodide) {
+            clearInterval(checkInterval);
+            initPyodide();
+          }
+        }, 100);
+      }
+    }
+
+    return () => {
+      if (checkInterval) clearInterval(checkInterval);
+    };
   }, []);
+
+  // Cleanup on unmount
+  React.useEffect(() => {
+    return () => {
+      if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
+      if (timelineIntervalRef.current) clearInterval(timelineIntervalRef.current);
+    };
+  }, []);
+
+  // Automated AI Turn Loop Effect
+  React.useEffect(() => {
+    if (!gameStarted || !topologyData || isPaused || isGameOver || isBrowsingHistory) {
+      if (aiTimeoutRef.current) {
+        clearTimeout(aiTimeoutRef.current);
+        aiTimeoutRef.current = null;
+      }
+      setIsAiThinking(false);
+      return;
+    }
+
+    const allOccupied = topologyData.units.every(u => u.type !== 0);
+    const stepLimitReached = (topologyData.metadata?.timer || 0) >= 200;
+
+    if (allOccupied || stepLimitReached) {
+      setIsGameOver(true);
+      if (aiTimeoutRef.current) {
+        clearTimeout(aiTimeoutRef.current);
+        aiTimeoutRef.current = null;
+      }
+      setIsAiThinking(false);
+      setTimeout(() => {
+        alert(`Game Finished! ${allOccupied ? "All tiles are occupied." : "Reached maximum limit of 200 steps."}`);
+      }, 50);
+      return;
+    }
+
+    const activePlayer = turnOrder[activeRoleIndex];
+    const isAIEnabled = roleAISettings[String(activePlayer)] || false;
+
+    if (isAIEnabled) {
+      if (aiTimeoutRef.current) return; // Prevent double-triggering
+
+      setIsAiThinking(true);
+      aiTimeoutRef.current = setTimeout(async () => {
+        try {
+          // 1. Fetch valid actions from Pyodide WebAssembly
+          const { actions } = await pyodideEngine.getValidActions(Number(activePlayer));
+
+          if (!actions || actions.length === 0) {
+            setIsGameOver(true);
+            alert("Game Finished! No more valid actions.");
+            return;
+          }
+
+          // 2. Select action: Use DQN model recommendation if loaded, otherwise fallback to random selection
+          let chosenAction = actions[Math.floor(Math.random() * actions.length)];
+          if (isRlLoaded && topologyData) {
+            const recommendation = getRLActionRecommendation(topologyData, actions);
+            if (recommendation) {
+              const matchedAction = actions.find((a: any[]) => a[0] === recommendation.actionType && a[1] === recommendation.unitId);
+              if (matchedAction) {
+                chosenAction = matchedAction;
+                console.log(`DQN Recommendation executed: ${recommendation.actionType} on unit ${recommendation.unitId} (reward Q: ${recommendation.predictedReward.toFixed(4)})`);
+              }
+            }
+          }
+          const [actionType, unitId] = chosenAction;
+
+          // 3. Play the turn
+          await handlePlayTurn(actionType, unitId === null ? undefined : unitId);
+        } catch (err: any) {
+          console.error("AI turn action error:", err);
+          setIsGameOver(true);
+        } finally {
+          setIsAiThinking(false);
+          aiTimeoutRef.current = null;
+        }
+      }, 150); // 150ms delay to prevent exceeding React update depth limits and allow visual turn transitions
+    } else {
+      if (aiTimeoutRef.current) {
+        clearTimeout(aiTimeoutRef.current);
+        aiTimeoutRef.current = null;
+      }
+      setIsAiThinking(false);
+    }
+  }, [gameStarted, activeRoleIndex, turnOrder, roleAISettings, topologyData, isPaused, isGameOver, isBrowsingHistory, isRlLoaded]);
 
   // Hover position helper
   const handleUnitHover = (unit: UrbanUnit | null, x?: number, y?: number) => {
@@ -104,6 +325,7 @@ export default function Home() {
   const handleModelUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      setIsModelLoading(true);
       setModelFile(file);
       setModelName(file.name);
     }
@@ -170,20 +392,7 @@ export default function Home() {
       setIsLoading(true);
       const strippedPayload = stripBoundaries(currentTopology);
 
-      const response = await fetch('/api/game/build', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(strippedPayload),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Server returned error: ${errText}`);
-      }
-
-      const data = await response.json();
+      const data = await pyodideEngine.buildGame(strippedPayload);
 
       setMacroStats({
         government_tax: data.metadata?.evaulate?.government_tax || 0,
@@ -202,6 +411,7 @@ export default function Home() {
       alert("Evaluation Error: " + err.message);
     } finally {
       setIsLoading(false);
+      setIsMapLoading(false);
     }
   };
 
@@ -211,6 +421,7 @@ export default function Home() {
     if (!file) return;
 
     setIsLoading(true);
+    setIsMapLoading(true);
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -273,25 +484,33 @@ export default function Home() {
         alert("Failed to parse grid JSON. Ensure it matches topology specifications.");
       }
       setIsLoading(false);
+      setIsMapLoading(false);
     };
     reader.readAsArrayBuffer(file);
   };
 
+
+
   // Clear topology grid 3D objects and reset states
   const clearTopologyGrid = () => {
+    setGameStarted(false);
     setTopologyData(null);
     setOriginalTopologyData(null);
     setGridName('');
     setHoveredUnitInfo(null);
+    setRoleAISettings({ "1": false, "2": false });
+    setIsAiThinking(false);
+    setIsPaused(false);
+    setIsGameOver(false);
+    setGameHistory([]);
+    setCurrentHistoryIndex(0);
+    setIsTimelinePlaying(false);
+    setRlLossHistory([]);
     setMacroStats({
       government_tax: 0,
       developer_profit: 0,
       total_population: 0
     });
-  };
-
-  const handleSwapOrder = () => {
-    setTurnOrder((prev) => prev.length > 1 ? [...prev.slice(1), prev[0]] : prev);
   };
 
   const handleStartGame = async () => {
@@ -303,29 +522,16 @@ export default function Home() {
       setIsLoading(true);
       const strippedPayload = stripBoundaries(topologyData);
 
-      const response = await fetch('/api/game/start', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          player_order: turnOrder
-        }),
+      const data = await pyodideEngine.startGame({
+        player_order: turnOrder
       });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(errText);
-      }
-
-      const data = await response.json();
-
-      // Update states and metrics
-      setMacroStats({
+      const nextStats = {
         government_tax: data.metadata?.evaulate?.government_tax || 0,
         developer_profit: data.metadata?.evaulate?.developer_profit || 0,
         total_population: data.metadata?.evaulate?.total_population || 0
-      });
+      };
+      setMacroStats(nextStats);
 
       const mergedTopology = mergeBoundaries(data, topologyData);
       setTopologyData(mergedTopology);
@@ -333,11 +539,29 @@ export default function Home() {
       // Sync game state from backend metadata
       const backendMeta = data.metadata || {};
       setGameStarted(backendMeta.game_started || true);
+      let nextTurnOrder = turnOrder;
       if (backendMeta.player_order) {
         setTurnOrder(backendMeta.player_order);
+        nextTurnOrder = backendMeta.player_order;
       }
       setActiveRoleIndex(0);
-      setTurnNumber((data.metadata?.timer !== undefined ? data.metadata.timer : (data.timer || 0)) + 1);
+      const nextTurnNumber = (data.metadata?.timer !== undefined ? data.metadata.timer : (data.timer || 0)) + 1;
+      setTurnNumber(nextTurnNumber);
+
+      setIsPaused(false);
+      setIsGameOver(false);
+      setIsTimelinePlaying(false);
+
+      // Initialize history
+      const initialHistoryState = {
+        topologyData: mergedTopology,
+        macroStats: nextStats,
+        activeRoleIndex: 0,
+        turnNumber: nextTurnNumber,
+        turnOrder: nextTurnOrder
+      };
+      setGameHistory([initialHistoryState]);
+      setCurrentHistoryIndex(0);
 
     } catch (err: any) {
       console.error("Failed to start game:", err);
@@ -348,9 +572,15 @@ export default function Home() {
   };
 
   const handleResetGame = () => {
+    setIsPaused(false);
+    setIsGameOver(false);
     setGameStarted(false);
     setActiveRoleIndex(0);
     setTurnNumber(1);
+    setIsAiThinking(false);
+    setGameHistory([]);
+    setCurrentHistoryIndex(0);
+    setIsTimelinePlaying(false);
     const initialKeys = Object.keys(rolesConfig).map(k => isNaN(Number(k)) ? k : Number(k));
     setTurnOrder(initialKeys.length > 0 ? initialKeys : [1, 2]);
     if (originalTopologyData) {
@@ -369,9 +599,10 @@ export default function Home() {
     }
   };
 
-  const handleSelectGameAction = (actionType: ActionType.PLACE | ActionType.REPLACE) => {
+  const handleSelectGameAction = (actionType: ActionType) => {
     if (selectedUnitForGameAction) {
-      handlePlayTurn(actionType, selectedUnitForGameAction.id);
+      const targetUnitId = actionType === ActionType.SKIP ? undefined : selectedUnitForGameAction.id;
+      handlePlayTurn(actionType, targetUnitId);
       setIsGameActionModalOpen(false);
       setSelectedUnitForGameAction(null);
     }
@@ -382,48 +613,51 @@ export default function Home() {
 
     try {
       setIsLoading(true);
-      const currentRole = turnOrder[activeRoleIndex];
-
       const activeRoleVal = turnOrder[activeRoleIndex];
       const allowedBuildings = rolesConfig[String(activeRoleVal)]?.allowed_types || [];
       const unitType = allowedBuildings.length > 0 ? allowedBuildings[0] : null;
 
-      const response = await fetch('/api/game/step', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action_type: actionType,
-          unit_id: unitId ?? null,
-          unit_type: unitType
-        }),
+      const data = await pyodideEngine.runGameStep({
+        action_type: actionType,
+        unit_id: unitId ?? null,
+        unit_type: unitType
       });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(errText);
-      }
-
-      const data = await response.json();
-
       // Update states
-      setMacroStats({
+      const nextStats = {
         government_tax: data.metadata?.evaulate?.government_tax || 0,
         developer_profit: data.metadata?.evaulate?.developer_profit || 0,
         total_population: data.metadata?.evaulate?.total_population || 0
-      });
+      };
+      setMacroStats(nextStats);
 
       const mergedTopology = mergeBoundaries(data, topologyData);
       setTopologyData(mergedTopology);
 
       // Sync game state from backend metadata
       const backendMeta = data.metadata || {};
+      let nextTurnOrder = turnOrder;
       if (backendMeta.player_order) {
         setTurnOrder(backendMeta.player_order);
+        nextTurnOrder = backendMeta.player_order;
       }
       setActiveRoleIndex(0);
-      setTurnNumber((data.metadata?.timer !== undefined ? data.metadata.timer : (data.timer || 0)) + 1);
+      const nextTurnNumber = (data.metadata?.timer !== undefined ? data.metadata.timer : (data.timer || 0)) + 1;
+      setTurnNumber(nextTurnNumber);
+
+      // Update history
+      const nextHistoryState = {
+        topologyData: mergedTopology,
+        macroStats: nextStats,
+        activeRoleIndex: 0,
+        turnNumber: nextTurnNumber,
+        turnOrder: nextTurnOrder
+      };
+      setGameHistory(prev => {
+        const newHist = [...prev, nextHistoryState];
+        setCurrentHistoryIndex(newHist.length - 1);
+        return newHist;
+      });
 
     } catch (err: any) {
       console.error("Failed to execute game turn step:", err);
@@ -476,20 +710,117 @@ export default function Home() {
     }
   };
 
+  const rlCancelledRef = React.useRef<boolean>(false);
+
+  // DQN Reinforcement Learning Training Handler using TensorFlow.js in the browser
+  const handleTrainRL = async (episodes: number, lr: number) => {
+    if (!topologyData) {
+      alert("Please upload a grid topology JSON first.");
+      return;
+    }
+    try {
+      setIsRlTraining(true);
+      setRlProgress(0);
+      setRlEpisode(0);
+      setRlLoss(null);
+      setRlLossHistory([]);
+      setRlMetrics(null);
+      rlCancelledRef.current = false;
+
+      await trainRL(
+        topologyData,
+        episodes,
+        lr,
+        (metrics: RLTrainingMetrics) => {
+          setRlEpisode(metrics.episode);
+          setRlLoss(metrics.avgLoss);
+          setRlProgress(Math.round((metrics.episode / episodes) * 100));
+          setRlLossHistory(prev => [...prev, metrics.avgLoss]);
+          setRlMetrics(metrics);
+        },
+        () => rlCancelledRef.current
+      );
+
+      if (!rlCancelledRef.current) {
+        setIsRlTraining(false);
+        setIsRlLoaded(true);
+        setRlProgress(100);
+        setRlEpisode(episodes);
+        alert("RL Training completed! (TensorFlow.js)");
+      }
+    } catch (err: any) {
+      console.error("DQN RL Training Error:", err);
+      alert("RL Training failed: " + err.message);
+      setIsRlTraining(false);
+    }
+  };
+
+  const cancelTrainRL = () => {
+    rlCancelledRef.current = true;
+    setIsRlTraining(false);
+  };
+
+  const handleSaveRL = async () => {
+    try {
+      await saveRLModels();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const onLoadRLFile = async (file: File) => {
+    try {
+      await loadRLModelFromSingleFile(file);
+      setIsRlLoaded(true);
+      alert("PPO models successfully loaded from the unified file!");
+    } catch (err: any) {
+      console.error(err);
+      alert("Failed to load models: " + err.message);
+    }
+  };
+
+  const handleClearRLModels = async () => {
+    try {
+      await clearAllCachedModels();
+      setIsRlLoaded(false);
+      setRlLossHistory([]);
+      setRlMetrics(null);
+      alert("Cached model settings cleared.");
+    } catch (err: any) {
+      alert("Failed to clear models: " + err.message);
+    }
+  };
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background font-sans text-foreground select-none transition-colors duration-300">
+      <Script
+        src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"
+        strategy="beforeInteractive"
+      />
+
+      {isPyodideLoading && (
+        <div className="absolute inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-950 text-white select-none pointer-events-auto">
+          <div className="p-8 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-xl flex flex-col items-center max-w-sm text-center shadow-2xl">
+            <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-6"></div>
+            <h2 className="text-xl font-bold tracking-tight mb-2">Initializing Python Engine</h2>
+            <p className="text-sm text-slate-400">Loading Pyodide WebAssembly runtimes and compiling local game logic client-side...</p>
+          </div>
+        </div>
+      )}
 
       {/* 3D Viewport Container */}
       <Viewport3D
         modelFile={modelFile}
         modelName={modelName}
         gridName={gridName}
-        topologyData={topologyData}
+        topologyData={displayedTopologyData}
         isForceWhite={isForceWhite}
         standardView={standardView}
         onStandardViewProcessed={() => setStandardView(null)}
         onUnitHover={handleUnitHover}
         onUnitClick={(unit) => {
+          if (isBrowsingHistory) return; // Disable clicking during history browsing
+          if (isAiThinking || (gameStarted && roleAISettings[String(displayedTurnOrder[displayedActiveRoleIndex])])) return; // Disable clicking during AI thinking
           if (gameStarted) {
             setSelectedUnitForGameAction(unit);
             setIsGameActionModalOpen(true);
@@ -498,7 +829,10 @@ export default function Home() {
             setIsEditModalOpen(true);
           }
         }}
-        onLoadingChange={setIsLoading}
+        onLoadingChange={(loading) => {
+          setIsLoading(loading);
+          setIsModelLoading(loading);
+        }}
       />
 
       {/* Floating Menu Toolbar (Left Sidebar) */}
@@ -506,7 +840,9 @@ export default function Home() {
         modelName={modelName}
         gridName={gridName}
         isLoading={isLoading}
-        macroStats={macroStats}
+        isModelLoading={isModelLoading}
+        isMapLoading={isMapLoading}
+        macroStats={displayedMacroStats}
         isForceWhite={isForceWhite}
         onModelUpload={handleModelUpload}
         onModelClear={clearBackgroundModel}
@@ -517,23 +853,57 @@ export default function Home() {
 
         // Game Mode props
         gameStarted={gameStarted}
-        turnOrder={turnOrder}
-        activeRoleIndex={activeRoleIndex}
-        turnNumber={turnNumber}
+        turnOrder={displayedTurnOrder}
+        activeRoleIndex={displayedActiveRoleIndex}
+        turnNumber={displayedTurnNumber}
         onStartGame={handleStartGame}
-        onResetGame={handleResetGame}
         onUpdateTurnOrder={setTurnOrder}
-        onSkipTurn={handleSkipTurn}
         rolesConfig={rolesConfig}
+        roleAISettings={roleAISettings}
+        onToggleRoleAI={handleToggleRoleAI}
+        isPaused={isPaused}
+        isGameOver={isGameOver}
+        onTogglePause={() => setIsPaused(!isPaused)}
+        onEndGame={handleResetGame}
+      />
+
+      {/* PPO Training Right Sidebar */}
+      <RightBar
+        hasTopologyData={topologyData !== null}
+        isRlTraining={isRlTraining}
+        rlProgress={rlProgress}
+        rlEpisode={rlEpisode}
+        rlLoss={rlLoss}
+        rlLossHistory={rlLossHistory}
+        rlMetrics={rlMetrics}
+        onTrainRL={handleTrainRL}
+        onCancelTrainRL={cancelTrainRL}
+        isRlLoaded={isRlLoaded}
+        onSaveRL={handleSaveRL}
+        onLoadRLFile={onLoadRLFile}
+        onClearRL={handleClearRLModels}
       />
 
       {/* Hover Information Panel (Follows cursor) */}
       {!isEditModalOpen && (
-        <HoverPanel hoveredUnitInfo={hoveredUnitInfo} hoverPosition={hoverPosition} topologyData={topologyData} />
+        <HoverPanel hoveredUnitInfo={hoveredUnitInfo} hoverPosition={hoverPosition} topologyData={displayedTopologyData} />
       )}
 
-      {/* Standard Views Selector (Bottom Center) */}
-      <BottomBar onSetView={setStandardView} theme={theme} onToggleTheme={handleToggleTheme} />
+      {/* Standard Views Selector & Playback Timeline (Bottom Center) */}
+      <BottomBar
+        onSetView={setStandardView}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
+        gameStarted={gameStarted}
+        gameHistoryLength={gameHistory.length}
+        currentIndex={currentHistoryIndex}
+        onIndexChange={setCurrentHistoryIndex}
+        isDraggable={isPaused || isGameOver}
+        isPlaying={isTimelinePlaying}
+        onTogglePlay={() => setIsTimelinePlaying(!isTimelinePlaying)}
+        fps={timelineFps}
+        onFpsChange={setTimelineFps}
+      />
 
       {/* Edit Unit Properties Modal Popup */}
       <EditFaceModal
@@ -554,9 +924,9 @@ export default function Home() {
 
       {/* Game Action Modal Popup */}
       {(() => {
-        const activeRoleVal = topologyData?.metadata?.next_player ?? turnOrder[activeRoleIndex] ?? 1;
-        const allowedBehavior = topologyData?.metadata?.valid_action ?? [];
-        const allowedBuildings = topologyData?.metadata?.valid_type ?? [];
+        const activeRoleVal = displayedTopologyData?.metadata?.next_player ?? displayedTurnOrder[displayedActiveRoleIndex] ?? 1;
+        const allowedBehavior = displayedTopologyData?.metadata?.valid_action ?? [];
+        const allowedBuildings = displayedTopologyData?.metadata?.valid_type ?? [];
         const roleName = rolesConfig[String(activeRoleVal)]?.name ?? (activeRoleVal === 1 ? "Developer" : "Government");
         return (
           <GameActionModal

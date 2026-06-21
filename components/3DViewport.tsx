@@ -19,37 +19,6 @@ interface Viewport3DProps {
   onLoadingChange: (isLoading: boolean) => void;
 }
 
-// Helper to set range colors in a BufferGeometry's 4-component color attribute
-const setRangeColor = (
-  geometry: THREE.BufferGeometry,
-  start: number,
-  count: number,
-  color: THREE.Color,
-  opacity: number
-) => {
-  const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute;
-  if (!colorAttr) return;
-  const array = colorAttr.array as Float32Array;
-  for (let i = start; i < start + count; i++) {
-    array[i * 4] = color.r;
-    array[i * 4 + 1] = color.g;
-    array[i * 4 + 2] = color.b;
-    array[i * 4 + 3] = opacity;
-  }
-  colorAttr.needsUpdate = true;
-};
-
-// Helper to color unit by build type
-const getColorByBuiltType = (type?: number) => {
-  switch (type) {
-    case 1:
-      return 0xf59e0b; // Amber/Orange (Residential)
-    case 2:
-      return 0x10b981; // Green (Park/Green)
-    default:
-      return 0x4b5563; // Default Gray
-  }
-};
 
 export default function Viewport3D({
   modelFile,
@@ -84,14 +53,82 @@ export default function Viewport3D({
   const hoveredMeshRef = useRef<THREE.Mesh | null>(null);
 
   // Interactive / Hover references
-  const hoveredFaceIdRef = useRef<string | null>(null); // Hovered unit ID
   const raycasterRef = useRef(new THREE.Raycaster());
 
   // Cache last loaded model/grid names to prevent view reset on edits
   const lastModelNameRef = useRef<string>('');
   const lastGridNameRef = useRef<string>('');
 
-  // Cache materials
+  // Reusable materials
+  const blockMaterialRef = useRef(
+    new THREE.MeshStandardMaterial({
+      color: 0x4b5563,
+      roughness: 0.4,
+      metalness: 0.2,
+      transparent: true,
+      opacity: 0.15,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
+    })
+  );
+
+  const residentialMaterialRef = useRef(
+    new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      roughness: 0.4,
+      metalness: 0.2,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
+    })
+  );
+
+  const greenMaterialRef = useRef(
+    new THREE.MeshStandardMaterial({
+      color: 0x10b981,
+      roughness: 0.4,
+      metalness: 0.2,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
+    })
+  );
+
+  const emptyMaterialRef = useRef(
+    new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.4,
+      metalness: 0.2,
+      transparent: true,
+      opacity: 0.35,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
+    })
+  );
+
+  const hoverMaterialRef = useRef(
+    new THREE.MeshStandardMaterial({
+      color: 0xec4899,
+      roughness: 0.4,
+      metalness: 0.2,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: true,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
+    })
+  );
+
   const whiteMaterialRef = useRef(
     new THREE.MeshStandardMaterial({
       color: 0xdddddd,
@@ -100,6 +137,38 @@ export default function Viewport3D({
       transparent: false
     })
   );
+
+  const outlineMaterialRef = useRef(
+    new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      linewidth: 1.5,
+      transparent: true,
+      opacity: 0.28
+    })
+  );
+
+  const sphereMaterialRef = useRef(
+    new THREE.MeshStandardMaterial({
+      color: 0x4f46e5,
+      roughness: 0.3,
+      metalness: 0.3
+    })
+  );
+
+  // Mesh cache and hover tracking
+  const unitMeshesRef = useRef<Map<number, THREE.Mesh>>(new Map());
+  const hoveredUnitIdRef = useRef<number | null>(null);
+
+  const getBaseMaterial = (type?: number) => {
+    switch (type) {
+      case 1:
+        return residentialMaterialRef.current;
+      case 2:
+        return greenMaterialRef.current;
+      default:
+        return emptyMaterialRef.current;
+    }
+  };
 
   // Initialize Three.js Engine
   useEffect(() => {
@@ -189,19 +258,13 @@ export default function Viewport3D({
     controlsRef.current = controls;
 
     const clearHoverState = () => {
-      if (hoveredFaceIdRef.current !== null && hoveredMeshRef.current) {
-        const prevRange = hoveredMeshRef.current.userData.faceRanges.find((r: any) => r.id === hoveredFaceIdRef.current);
-        if (prevRange) {
-          setRangeColor(
-            hoveredMeshRef.current.geometry,
-            prevRange.start,
-            prevRange.count,
-            prevRange.originalColor,
-            prevRange.originalOpacity
-          );
+      if (hoveredUnitIdRef.current !== null && hoveredMeshRef.current) {
+        const prevUnit = hoveredMeshRef.current.userData.unit;
+        if (prevUnit) {
+          hoveredMeshRef.current.material = getBaseMaterial(prevUnit.type);
         }
       }
-      hoveredFaceIdRef.current = null;
+      hoveredUnitIdRef.current = null;
       hoveredMeshRef.current = null;
       onUnitHoverRef.current(null, 0, 0);
     };
@@ -217,54 +280,31 @@ export default function Viewport3D({
       raycasterRef.current.setFromCamera(new THREE.Vector2(pointerX, pointerY), camera);
 
       const intersects = raycasterRef.current.intersectObjects(topologyGroupRef.current.children, true);
-      const hitRegion = intersects.find(item => item.object.userData.isRegion === true && item.faceIndex !== undefined);
+      const hitRegion = intersects.find(item => item.object.userData.isUnit === true);
 
-      if (hitRegion && hitRegion.face) {
+      if (hitRegion) {
         const hitMesh = hitRegion.object as THREE.Mesh;
-        const faceRanges = hitMesh.userData.faceRanges as any[];
-        const vertexIndex = hitRegion.face.a;
-        const hitRange = faceRanges.find(r => vertexIndex >= r.start && vertexIndex < r.start + r.count);
+        const targetUnitId = hitMesh.userData.unitId as number;
+        const unitData = hitMesh.userData.unit;
 
-        if (hitRange) {
-          const targetUnitId = hitRange.id;
-
-          if (hoveredFaceIdRef.current !== targetUnitId) {
-            // Restore previous hovered face's colors
-            if (hoveredFaceIdRef.current !== null && hoveredMeshRef.current) {
-              const prevRange = hoveredMeshRef.current.userData.faceRanges.find((r: any) => r.id === hoveredFaceIdRef.current);
-              if (prevRange) {
-                setRangeColor(
-                  hoveredMeshRef.current.geometry,
-                  prevRange.start,
-                  prevRange.count,
-                  prevRange.originalColor,
-                  prevRange.originalOpacity
-                );
+        if (unitData) {
+          if (hoveredUnitIdRef.current !== targetUnitId) {
+            // Restore previous hovered mesh
+            if (hoveredUnitIdRef.current !== null && hoveredMeshRef.current) {
+              const prevUnit = hoveredMeshRef.current.userData.unit;
+              if (prevUnit) {
+                hoveredMeshRef.current.material = getBaseMaterial(prevUnit.type);
               }
             }
 
-            // Highlight new hovered unit (magenta color 0xec4899, alpha 0.85) in hitMesh
-            const currentRange = hitMesh.userData.faceRanges.find((r: any) => r.id === targetUnitId);
-            if (currentRange) {
-              const highlightColor = new THREE.Color(0xec4899);
-              setRangeColor(
-                hitMesh.geometry,
-                currentRange.start,
-                currentRange.count,
-                highlightColor,
-                0.85
-              );
-            }
+            // Highlight new hovered unit
+            hitMesh.material = hoverMaterialRef.current;
 
-            hoveredFaceIdRef.current = targetUnitId;
+            hoveredUnitIdRef.current = targetUnitId;
             hoveredMeshRef.current = hitMesh;
           }
 
-          // Trigger hover callback with updated mouse coordinates on every move
-          const unitData = hitMesh.userData.unitsData.find((u: any) => u.id === targetUnitId);
-          if (unitData) {
-            onUnitHoverRef.current(unitData, event.clientX, event.clientY);
-          }
+          onUnitHoverRef.current(unitData, event.clientX, event.clientY);
           container.style.cursor = 'pointer';
         } else {
           clearHoverState();
@@ -300,20 +340,13 @@ export default function Viewport3D({
         raycasterRef.current.setFromCamera(new THREE.Vector2(pointerX, pointerY), cameraRef.current);
 
         const intersects = raycasterRef.current.intersectObjects(topologyGroupRef.current.children, true);
-        const hitRegion = intersects.find(item => item.object.userData.isRegion === true && item.faceIndex !== undefined);
+        const hitRegion = intersects.find(item => item.object.userData.isUnit === true);
 
-        if (hitRegion && hitRegion.face) {
+        if (hitRegion) {
           const hitMesh = hitRegion.object as THREE.Mesh;
-          const faceRanges = hitMesh.userData.faceRanges as any[];
-          const vertexIndex = hitRegion.face.a;
-          const hitRange = faceRanges.find(r => vertexIndex >= r.start && vertexIndex < r.start + r.count);
-
-          if (hitRange) {
-            const targetUnitId = hitRange.id;
-            const unitData = hitMesh.userData.unitsData.find((u: any) => u.id === targetUnitId);
-            if (unitData) {
-              onUnitClickRef.current(unitData);
-            }
+          const unitData = hitMesh.userData.unit;
+          if (unitData) {
+            onUnitClickRef.current(unitData);
           }
         }
       }
@@ -356,6 +389,15 @@ export default function Viewport3D({
       yMaterial.dispose();
       controls.dispose();
       renderer.dispose();
+
+      blockMaterialRef.current.dispose();
+      residentialMaterialRef.current.dispose();
+      greenMaterialRef.current.dispose();
+      emptyMaterialRef.current.dispose();
+      hoverMaterialRef.current.dispose();
+      whiteMaterialRef.current.dispose();
+      outlineMaterialRef.current.dispose();
+      sphereMaterialRef.current.dispose();
 
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
@@ -535,31 +577,58 @@ export default function Viewport3D({
     if (!topologyGroup) return;
 
     // Reset hover states
-    hoveredFaceIdRef.current = null;
+    hoveredUnitIdRef.current = null;
+    hoveredMeshRef.current = null;
     onUnitHover(null);
 
     topologyGroup.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
         mesh.geometry.dispose();
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        mats.forEach((m) => m?.dispose());
       } else if ((child as THREE.Line).isLine) {
         const line = child as THREE.Line;
         line.geometry.dispose();
-        const mats = Array.isArray(line.material) ? line.material : [line.material];
-        mats.forEach((m) => m?.dispose());
       }
     });
 
     while (topologyGroup.children.length > 0) {
       topologyGroup.remove(topologyGroup.children[0]);
     }
+
+    unitMeshesRef.current.clear();
+  };
+
+  const updateTopologyMaterials = (data: TopologyData) => {
+    data.units.forEach((unit) => {
+      const mesh = unitMeshesRef.current.get(unit.id);
+      if (mesh) {
+        // Update unit reference inside mesh userData
+        mesh.userData.unit = unit;
+
+        // Apply correct material based on unit type, unless it's currently hovered
+        if (hoveredUnitIdRef.current === unit.id) {
+          mesh.material = hoverMaterialRef.current;
+        } else {
+          mesh.material = getBaseMaterial(unit.type);
+        }
+      }
+    });
   };
 
   const setupTopologyGrid = (data: TopologyData) => {
     const topologyGroup = topologyGroupRef.current;
     if (!topologyGroup) return;
+
+    // Check if we can reuse the existing grid and only update materials
+    const canReuseGrid =
+      gridName === lastGridNameRef.current &&
+      unitMeshesRef.current.size === data.units.length &&
+      data.units.every((u) => unitMeshesRef.current.has(u.id));
+
+    if (canReuseGrid) {
+      updateTopologyMaterials(data);
+      return;
+    }
 
     clearTopologyGroupObjects();
 
@@ -569,15 +638,6 @@ export default function Viewport3D({
 
     // 1. Construct Block geometries (flat faces)
     const blockGeometries: THREE.BufferGeometry[] = [];
-    const blockRanges: {
-      id: number;
-      start: number;
-      count: number;
-      originalColor: THREE.Color;
-      originalOpacity: number;
-    }[] = [];
-
-    let currentBlockVertexOffset = 0;
 
     data.blocks.forEach((block) => {
       const boundary = block.boundary;
@@ -598,30 +658,7 @@ export default function Viewport3D({
           geometry = nonIndexedGeometry;
         }
 
-        const colorHex = 0x4b5563; // Unoccupied default gray for blocks
-        const color = new THREE.Color(colorHex);
-        const opacity = 0.15;
-
-        const count = geometry.attributes.position.count;
-        const colors = new Float32Array(count * 4);
-        for (let i = 0; i < count; i++) {
-          colors[i * 4] = color.r;
-          colors[i * 4 + 1] = color.g;
-          colors[i * 4 + 2] = color.b;
-          colors[i * 4 + 3] = opacity;
-        }
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
-
         blockGeometries.push(geometry);
-        blockRanges.push({
-          id: block.id,
-          start: currentBlockVertexOffset,
-          count: count,
-          originalColor: color,
-          originalOpacity: opacity
-        });
-
-        currentBlockVertexOffset += count;
 
         boundary.forEach((p) => {
           const key = `${p[0].toFixed(2)},${p[1].toFixed(2)},${p[2].toFixed(2)}`;
@@ -635,22 +672,9 @@ export default function Viewport3D({
     if (blockGeometries.length > 0) {
       const mergedBlockGeometry = BufferGeometryUtils.mergeGeometries(blockGeometries, false);
       if (mergedBlockGeometry) {
-        const material = new THREE.MeshStandardMaterial({
-          vertexColors: true,
-          roughness: 0.4,
-          metalness: 0.2,
-          transparent: true,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: 1,
-          polygonOffsetUnits: 1
-        });
-
-        const blockMesh = new THREE.Mesh(mergedBlockGeometry, material);
+        const blockMesh = new THREE.Mesh(mergedBlockGeometry, blockMaterialRef.current);
         blockMesh.userData = {
           isBlock: true,
-          faceRanges: blockRanges,
           name: "Topology Block Mesh",
           blocksData: data.blocks
         };
@@ -659,31 +683,6 @@ export default function Viewport3D({
     }
 
     // 2. Construct Unit geometries (extruded buildings)
-    const occupiedGeometries: THREE.BufferGeometry[] = [];
-    const emptyGeometries: THREE.BufferGeometry[] = [];
-    
-    const occupiedRanges: {
-      id: string; // unit ID
-      start: number;
-      count: number;
-      originalColor: THREE.Color;
-      originalOpacity: number;
-    }[] = [];
-
-    const emptyRanges: {
-      id: string; // unit ID
-      start: number;
-      count: number;
-      originalColor: THREE.Color;
-      originalOpacity: number;
-    }[] = [];
-
-    const occupiedUnitsData: UrbanUnit[] = [];
-    const emptyUnitsData: UrbanUnit[] = [];
-
-    let occupiedVertexOffset = 0;
-    let emptyVertexOffset = 0;
-
     data.units.forEach((unit) => {
       const boundary = unit.boundary;
       if (boundary && boundary.length > 2 && unit.height > 0) {
@@ -706,112 +705,20 @@ export default function Viewport3D({
           geometry = nonIndexedGeometry;
         }
 
-        const count = geometry.attributes.position.count;
-        const colors = new Float32Array(count * 4);
+        const meshMaterial = getBaseMaterial(unit.type);
+        const unitMesh = new THREE.Mesh(geometry, meshMaterial);
+        
+        unitMesh.userData = {
+          isRegion: true,
+          isUnit: true,
+          unitId: unit.id,
+          unit: unit
+        };
 
-        if (unit.type !== 0) {
-          const colorHex = getColorByBuiltType(unit.type);
-          const color = new THREE.Color(colorHex);
-          const opacity = 1.0;
-          for (let i = 0; i < count; i++) {
-            colors[i * 4] = color.r;
-            colors[i * 4 + 1] = color.g;
-            colors[i * 4 + 2] = color.b;
-            colors[i * 4 + 3] = opacity;
-          }
-          geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
-          
-          occupiedGeometries.push(geometry);
-          occupiedRanges.push({
-            id: unit.id,
-            start: occupiedVertexOffset,
-            count: count,
-            originalColor: color,
-            originalOpacity: opacity
-          });
-          occupiedUnitsData.push(unit);
-          occupiedVertexOffset += count;
-        } else {
-          const colorHex = 0xffffff;
-          const color = new THREE.Color(colorHex);
-          const opacity = 0.35;
-          for (let i = 0; i < count; i++) {
-            colors[i * 4] = color.r;
-            colors[i * 4 + 1] = color.g;
-            colors[i * 4 + 2] = color.b;
-            colors[i * 4 + 3] = opacity;
-          }
-          geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
-
-          emptyGeometries.push(geometry);
-          emptyRanges.push({
-            id: unit.id,
-            start: emptyVertexOffset,
-            count: count,
-            originalColor: color,
-            originalOpacity: opacity
-          });
-          emptyUnitsData.push(unit);
-          emptyVertexOffset += count;
-        }
+        topologyGroup.add(unitMesh);
+        unitMeshesRef.current.set(unit.id, unitMesh);
       }
     });
-
-    if (occupiedGeometries.length > 0) {
-      const mergedOccupiedGeometry = BufferGeometryUtils.mergeGeometries(occupiedGeometries, false);
-      if (mergedOccupiedGeometry) {
-        const material = new THREE.MeshStandardMaterial({
-          vertexColors: true,
-          roughness: 0.4,
-          metalness: 0.2,
-          transparent: false,
-          side: THREE.DoubleSide,
-          depthWrite: true,
-          polygonOffset: true,
-          polygonOffsetFactor: 1,
-          polygonOffsetUnits: 1
-        });
-
-        const occupiedMesh = new THREE.Mesh(mergedOccupiedGeometry, material);
-        occupiedMesh.userData = {
-          isRegion: true,
-          isUnit: true,
-          isOccupied: true,
-          faceRanges: occupiedRanges,
-          name: "Topology Occupied Unit Mesh",
-          unitsData: occupiedUnitsData
-        };
-        topologyGroup.add(occupiedMesh);
-      }
-    }
-
-    if (emptyGeometries.length > 0) {
-      const mergedEmptyGeometry = BufferGeometryUtils.mergeGeometries(emptyGeometries, false);
-      if (mergedEmptyGeometry) {
-        const material = new THREE.MeshStandardMaterial({
-          vertexColors: true,
-          roughness: 0.4,
-          metalness: 0.2,
-          transparent: true,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: 1,
-          polygonOffsetUnits: 1
-        });
-
-        const emptyMesh = new THREE.Mesh(mergedEmptyGeometry, material);
-        emptyMesh.userData = {
-          isRegion: true,
-          isUnit: true,
-          isEmpty: true,
-          faceRanges: emptyRanges,
-          name: "Topology Empty Unit Mesh",
-          unitsData: emptyUnitsData
-        };
-        topologyGroup.add(emptyMesh);
-      }
-    }
 
     // 3. Draw outlines
     const allOutlinePoints: THREE.Vector3[] = [];
@@ -851,23 +758,12 @@ export default function Viewport3D({
 
     if (allOutlinePoints.length > 0) {
       const outlineGeometry = new THREE.BufferGeometry().setFromPoints(allOutlinePoints);
-      const outlineMaterial = new THREE.LineBasicMaterial({
-        color: 0xffffff,
-        linewidth: 1.5,
-        transparent: true,
-        opacity: 0.28
-      });
-      const lines = new THREE.LineSegments(outlineGeometry, outlineMaterial);
+      const lines = new THREE.LineSegments(outlineGeometry, outlineMaterialRef.current);
       topologyGroup.add(lines);
     }
 
     // 4. Draw vertices as spheres
     const sphereGeoms: THREE.BufferGeometry[] = [];
-    const sphereMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4f46e5,
-      roughness: 0.3,
-      metalness: 0.3
-    });
 
     uniqueVertices.forEach((pos) => {
       const geom = new THREE.SphereGeometry(0.12, 8, 8);
@@ -878,7 +774,7 @@ export default function Viewport3D({
     if (sphereGeoms.length > 0) {
       const mergedSpheres = BufferGeometryUtils.mergeGeometries(sphereGeoms, false);
       if (mergedSpheres) {
-        const verticesMesh = new THREE.Mesh(mergedSpheres, sphereMaterial);
+        const verticesMesh = new THREE.Mesh(mergedSpheres, sphereMaterialRef.current);
         topologyGroup.add(verticesMesh);
       }
     }

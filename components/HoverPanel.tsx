@@ -37,8 +37,6 @@ export default function HoverPanel({ hoveredUnitInfo, hoverPosition, topologyDat
     top = Math.max(10, top);
   }
 
-  const isOccupied = unit.type !== 0;
-
   return (
     <div 
       style={{ left, top }}
@@ -56,51 +54,31 @@ export default function HoverPanel({ hoveredUnitInfo, hoverPosition, topologyDat
         {/* Tooltip Metrics */}
         <div className="space-y-2 text-zinc-600 dark:text-zinc-300">
           <div className="flex justify-between">
-            <span>Unit ID:</span>
+            <span>id:</span>
             <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.id}</span>
           </div>
           <div className="flex justify-between">
-            <span>Parent Block:</span>
+            <span>parent id:</span>
             <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.parentid}</span>
           </div>
           <div className="flex justify-between">
-            <span>Occupied:</span>
-            <span className={`font-semibold ${isOccupied ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
-              {isOccupied ? 'YES' : 'NO'}
+            <span>type:</span>
+            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">
+              {unit.type === 1 ? 'residential' : (unit.type === 2 ? 'green' : 'empty')}
             </span>
           </div>
           <div className="flex justify-between">
-            <span>Build Type:</span>
-            <span className="text-zinc-950 dark:text-zinc-100 uppercase font-semibold">
-              {unit.type === 1 ? 'RESIDENTIAL' : (unit.type === 2 ? 'PARK / GREEN' : 'EMPTY')}
-            </span>
+            <span>height:</span>
+            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.height}</span>
           </div>
           <div className="flex justify-between">
-            <span>Floors (Height):</span>
-            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.height} F</span>
+            <span>value:</span>
+            <span className="text-pink-500 dark:text-pink-400 font-semibold">{unit.value}</span>
           </div>
-          {isOccupied && (
-            <>
-              <div className="flex justify-between">
-                <span>Value Score:</span>
-                <span className="text-pink-500 dark:text-pink-400 font-semibold">{unit.value} Pts</span>
-              </div>
-              {unit.type === 1 && (
-                <div className="flex justify-between">
-                  <span>Population:</span>
-                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{unit.population} Ppl</span>
-                </div>
-              )}
-            </>
-          )}
-          {block && (
-            <div className="flex justify-between pb-1">
-              <span>Neighbors:</span>
-              <span className="text-zinc-950 dark:text-zinc-100 truncate max-w-[120px]" title={block.neighbor?.join(', ')}>
-                {block.neighbor?.join(', ') || 'None'}
-              </span>
-            </div>
-          )}
+          <div className="flex justify-between">
+            <span>population:</span>
+            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{unit.population ?? 0}</span>
+          </div>
         </div>
         
         <div className="pt-2 border-t border-black/5 dark:border-white/5 text-[9px] text-zinc-500 dark:text-zinc-400 italic text-center">

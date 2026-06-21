@@ -9,28 +9,28 @@ interface GameActionModalProps {
   allowedBuildings: number[];
   roleName: string;
   onClose: () => void;
-  onSelectAction: (actionType: ActionType.PLACE | ActionType.REPLACE) => void;
+  onSelectAction: (actionType: ActionType) => void;
 }
 
 const getUnitTypeName = (type: number) => {
   switch (type) {
     case 1:
-      return 'Residential (住宅)';
+      return 'Residential';
     case 2:
-      return 'Green / Park (绿地)';
+      return 'Green / Park';
     default:
-      return 'Empty (空地)';
+      return 'Empty';
   }
 };
 
 const getBuildingTypeName = (type: number) => {
   switch (type) {
     case 1:
-      return 'Residential (住宅)';
+      return 'Residential';
     case 2:
-      return 'Green / Park (绿地)';
+      return 'Green / Park';
     default:
-      return 'Empty (空地)';
+      return 'Empty';
   }
 };
 
@@ -115,6 +115,13 @@ export default function GameActionModal({
               ⚠️ No valid actions can be performed on this tile by your role. (Current tile must be empty to place, or occupied to replace).
             </div>
           )}
+
+          <button
+            onClick={() => onSelectAction(ActionType.SKIP)}
+            className="w-full py-2.5 text-xs font-bold text-zinc-700 bg-zinc-100 hover:bg-zinc-200 dark:text-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 rounded-xl transition duration-150 cursor-pointer flex items-center justify-center gap-1.5"
+          >
+            ⏭️ Skip Turn
+          </button>
 
           <button
             onClick={onClose}
