@@ -25,8 +25,7 @@ import {
   getRLActionRecommendation,
   RLTrainingMetrics
 } from '@/rules/training';
-import Script from 'next/script';
-import { pyodideEngine } from '@/rules/pyodideEngine';
+import { tsEngine } from '@/rules/tsEngine';
 
 export default function Home() {
   // Theme state
@@ -57,7 +56,7 @@ export default function Home() {
   const [isForceWhite, setIsForceWhite] = useState<boolean>(false);
   const [isModelLoading, setIsModelLoading] = useState<boolean>(false);
   const [isMapLoading, setIsMapLoading] = useState<boolean>(false);
-  const [isPyodideLoading, setIsPyodideLoading] = useState<boolean>(true);
+
 
   // Active loaded topology data and stats
   const [topologyData, setTopologyData] = useState<TopologyData | null>(null);
@@ -150,6 +149,7 @@ export default function Home() {
   const [rlLossHistory, setRlLossHistory] = useState<number[]>([]);
   const [rlMetrics, setRlMetrics] = useState<RLTrainingMetrics | null>(null);
   const [isRlLoaded, setIsRlLoaded] = useState<boolean>(false);
+  const [rlBackend, setRlBackend] = useState<'cpu' | 'webgl'>('webgl');
 
   // Timeline playback states
   const [isTimelinePlaying, setIsTimelinePlaying] = useState<boolean>(false);
@@ -186,40 +186,26 @@ export default function Home() {
   }, [isTimelinePlaying, timelineFps, gameHistory.length]);
 
   React.useEffect(() => {
-    let checkInterval: NodeJS.Timeout;
-    const initPyodide = async () => {
+    const initEngine = async () => {
       try {
-        await pyodideEngine.init();
-        
-        // Fetch roles config from Pyodide
-        const roles = await pyodideEngine.initializePlayer();
+        await tsEngine.init();
+
+        // Fetch roles config from the engine
+        const roles = await tsEngine.initializePlayer();
         setRolesConfig(roles);
         if (turnOrder.length === 0) {
           const keys = Object.keys(roles).map(k => isNaN(Number(k)) ? k : Number(k));
           setTurnOrder(keys);
         }
-        setIsPyodideLoading(false);
+
       } catch (err) {
-        console.error("Pyodide init error:", err);
+        console.error("Engine init error:", err);
       }
     };
 
     if (typeof window !== 'undefined') {
-      if ((window as any).loadPyodide) {
-        initPyodide();
-      } else {
-        checkInterval = setInterval(() => {
-          if ((window as any).loadPyodide) {
-            clearInterval(checkInterval);
-            initPyodide();
-          }
-        }, 100);
-      }
+      initEngine();
     }
-
-    return () => {
-      if (checkInterval) clearInterval(checkInterval);
-    };
   }, []);
 
   // Cleanup on unmount
@@ -266,10 +252,10 @@ export default function Home() {
       setIsAiThinking(true);
       aiTimeoutRef.current = setTimeout(async () => {
         try {
-          // 1. Fetch valid actions from Pyodide WebAssembly
-          const { actions } = await pyodideEngine.getValidActions(Number(activePlayer));
-
-          if (!actions || actions.length === 0) {
+          const activePlayer = turnOrder[activeRoleIndex];
+          // 1. Fetch valid actions from the engine
+          const { actions } = await tsEngine.getValidActions(Number(activePlayer));
+          if (actions.length === 0) {
             setIsGameOver(true);
             alert("Game Finished! No more valid actions.");
             return;
@@ -392,7 +378,7 @@ export default function Home() {
       setIsLoading(true);
       const strippedPayload = stripBoundaries(currentTopology);
 
-      const data = await pyodideEngine.buildGame(strippedPayload);
+      const data = await tsEngine.buildGame(strippedPayload);
 
       setMacroStats({
         government_tax: data.metadata?.evaulate?.government_tax || 0,
@@ -520,10 +506,9 @@ export default function Home() {
     }
     try {
       setIsLoading(true);
-      const strippedPayload = stripBoundaries(topologyData);
-
-      const data = await pyodideEngine.startGame({
-        player_order: turnOrder
+      // Start game logic locally
+      const data = await tsEngine.startGame({
+        player_order: turnOrder.map(Number)
       });
 
       const nextStats = {
@@ -617,7 +602,8 @@ export default function Home() {
       const allowedBuildings = rolesConfig[String(activeRoleVal)]?.allowed_types || [];
       const unitType = allowedBuildings.length > 0 ? allowedBuildings[0] : null;
 
-      const data = await pyodideEngine.runGameStep({
+      // Call action locally
+      const data = await tsEngine.runGameStep({
         action_type: actionType,
         unit_id: unitId ?? null,
         unit_type: unitType
@@ -738,7 +724,8 @@ export default function Home() {
           setRlLossHistory(prev => [...prev, metrics.avgLoss]);
           setRlMetrics(metrics);
         },
-        () => rlCancelledRef.current
+        () => rlCancelledRef.current,
+        rlBackend
       );
 
       if (!rlCancelledRef.current) {
@@ -793,20 +780,7 @@ export default function Home() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-background font-sans text-foreground select-none transition-colors duration-300">
-      <Script
-        src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"
-        strategy="beforeInteractive"
-      />
 
-      {isPyodideLoading && (
-        <div className="absolute inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-950 text-white select-none pointer-events-auto">
-          <div className="p-8 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-xl flex flex-col items-center max-w-sm text-center shadow-2xl">
-            <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-6"></div>
-            <h2 className="text-xl font-bold tracking-tight mb-2">Initializing Python Engine</h2>
-            <p className="text-sm text-slate-400">Loading Pyodide WebAssembly runtimes and compiling local game logic client-side...</p>
-          </div>
-        </div>
-      )}
 
       {/* 3D Viewport Container */}
       <Viewport3D
@@ -882,6 +856,8 @@ export default function Home() {
         onSaveRL={handleSaveRL}
         onLoadRLFile={onLoadRLFile}
         onClearRL={handleClearRLModels}
+        rlBackend={rlBackend}
+        onChangeRlBackend={setRlBackend}
       />
 
       {/* Hover Information Panel (Follows cursor) */}

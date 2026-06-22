@@ -1,5 +1,5 @@
 import * as tf from '@tensorflow/tfjs';
-import { pyodideEngine } from './pyodideEngine';
+import { tsEngine } from './tsEngine';
 
 export interface TopologyData {
   metadata: {
@@ -183,8 +183,18 @@ export async function trainRL(
   episodes: number,
   learningRate: number,
   onEpisodeEnd: (metrics: RLTrainingMetrics) => void,
-  isCancelled: () => boolean
+  isCancelled: () => boolean,
+  backend: 'cpu' | 'webgl' = 'webgl'
 ): Promise<void> {
+  // Set selected backend in TensorFlow.js
+  if (tf.getBackend() !== backend) {
+    try {
+      await tf.setBackend(backend);
+      console.log(`[PPO] Switched backend to: ${backend}`);
+    } catch (e) {
+      console.warn(`[PPO] Failed to switch to backend ${backend}:`, e);
+    }
+  }
   const N = graph.units.length;
   const inputSize = N * 4;
   const outputSize = N + 1; // N slots + 1 SKIP
@@ -215,7 +225,7 @@ export async function trainRL(
     const governmentBuffer: Transition[] = [];
 
     // 1. Call training start on backend
-    let episodeState: TopologyData = pyodideEngine.trainingStart({
+    let episodeState: TopologyData = tsEngine.trainingStart({
       graph: startingGraphPayload,
       player_order: [1, 2]
     });
@@ -300,7 +310,7 @@ export async function trainRL(
       const validTypes = episodeState.metadata.valid_type || [];
       const builtType = validTypes.length > 0 ? validTypes[0] : 0;
 
-      const nextEpisodeState: TopologyData = pyodideEngine.trainingStep(
+      const nextEpisodeState: TopologyData = tsEngine.trainingStep(
         chosenAction[0] ?? 0,
         chosenAction[1],
         builtType
@@ -490,21 +500,28 @@ export async function trainRL(
     }
 
     const avgLoss = (devMetrics.avgLoss + govMetrics.avgLoss) / 2;
-    onEpisodeEnd({
-      episode: ep + 1,
-      avgLoss,
-      devActorLoss: devMetrics.actorLoss,
-      devCriticLoss: devMetrics.criticLoss,
-      devEntropy: devMetrics.entropy,
-      devReward,
-      govActorLoss: govMetrics.actorLoss,
-      govCriticLoss: govMetrics.criticLoss,
-      govEntropy: govMetrics.entropy,
-      govReward
-    });
+    
+    // 1. Throttle heavy React UI updates to every 10 episodes to prevent rendering bottlenecks
+    const shouldUpdateUI = (ep + 1) % 10 === 0 || ep === episodes - 1;
+    if (shouldUpdateUI) {
+      onEpisodeEnd({
+        episode: ep + 1,
+        avgLoss,
+        devActorLoss: devMetrics.actorLoss,
+        devCriticLoss: devMetrics.criticLoss,
+        devEntropy: devMetrics.entropy,
+        devReward,
+        govActorLoss: govMetrics.actorLoss,
+        govCriticLoss: govMetrics.criticLoss,
+        govEntropy: govMetrics.entropy,
+        govReward
+      });
+    }
 
-    // Yield control back to browser thread
-    await tf.nextFrame();
+    // 2. Yield control to the browser event loop on EVERY episode using setTimeout(0).
+    // This keeps the browser UI thread completely smooth (preventing freezes)
+    // without the 16.6ms frame rate limitation of requestAnimationFrame.
+    await new Promise(resolve => setTimeout(resolve, 0));
   }
 }
 

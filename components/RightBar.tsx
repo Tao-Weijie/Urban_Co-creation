@@ -15,6 +15,8 @@ interface RightBarProps {
   onSaveRL: () => void;
   onLoadRLFile: (file: File) => void;
   onClearRL: () => void;
+  rlBackend: 'cpu' | 'webgl';
+  onChangeRlBackend: (backend: 'cpu' | 'webgl') => void;
 }
 
 export default function RightBar({
@@ -30,7 +32,9 @@ export default function RightBar({
   isRlLoaded,
   onSaveRL,
   onLoadRLFile,
-  onClearRL
+  onClearRL,
+  rlBackend,
+  onChangeRlBackend
 }: RightBarProps) {
   const [rlEpisodesInput, setRlEpisodesInput] = useState<number>(100);
   const [rlLrInput, setRlLrInput] = useState<number>(0.001);
@@ -249,6 +253,17 @@ export default function RightBar({
                       <option value={0.01}>0.010</option>
                       <option value={0.005}>0.005</option>
                       <option value={0.001}>0.001</option>
+                    </select>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-zinc-500">Device Backend:</span>
+                    <select 
+                      value={rlBackend} 
+                      onChange={(e) => onChangeRlBackend(e.target.value as 'cpu' | 'webgl')}
+                      className="w-16 bg-white dark:bg-black/50 border border-black/10 dark:border-white/10 rounded px-1 py-0.5 text-right cursor-pointer"
+                    >
+                      <option value="webgl">GPU (WebGL)</option>
+                      <option value="cpu">CPU</option>
                     </select>
                   </div>
                 </div>

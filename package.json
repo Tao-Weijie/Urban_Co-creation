@@ -4,8 +4,6 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001 --webpack",
-    "dev:python": ".venv\\Scripts\\python -m uvicorn backend.server:app --host 127.0.0.1 --port 8000 --reload",
-    "dev:all": "concurrently \"npm run dev\" \"npm run dev:python\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
