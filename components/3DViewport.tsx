@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Block, UrbanUnit, TopologyData } from '@/rules/topology';
+import { Block, UrbanUnit, TopologyData } from '@/game_engine/topology';
 
 interface Viewport3DProps {
   modelFile: File | null;

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { UrbanUnit } from '@/rules/topology';
+import { UrbanUnit } from '@/game_engine/topology';
 
 interface EditFaceModalProps {
   isOpen: boolean;

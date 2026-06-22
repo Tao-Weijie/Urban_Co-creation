@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RLTrainingMetrics } from '@/rules/training';
+import { RLTrainingMetrics } from '@/game_engine/training';
 
 interface RightBarProps {
   hasTopologyData: boolean;
@@ -124,7 +124,7 @@ export default function RightBar({
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
             </span>
-            PPO Diagnostics
+            MAPPO Diagnostics
           </span>
           <span className="font-bold text-zinc-400 dark:text-zinc-600">Episode {rlMetrics.episode}</span>
         </div>
@@ -205,7 +205,7 @@ export default function RightBar({
   return (
     <div className="absolute top-6 right-6 z-10 w-80 max-w-sm rounded-2xl border border-black/10 bg-white/80 dark:border-white/10 dark:bg-black/70 p-5 shadow-2xl backdrop-blur-md transition-all duration-300 hover:border-black/20 dark:hover:border-white/20 text-zinc-800 dark:text-zinc-200 overflow-y-auto max-h-[92vh]">
       
-      {/* PPO Multi-Agent Training Panel */}
+      {/* MAPPO Multi-Agent Training Panel */}
       <div className="space-y-3">
         <div className="flex justify-between items-center cursor-pointer select-none" onClick={() => setIsRlOpen(!isRlOpen)}>
           <span className="text-[10px] font-bold text-violet-500 uppercase tracking-wider block flex items-center gap-1.5">
@@ -219,7 +219,7 @@ export default function RightBar({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2-2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" />
               </svg>
             )}
-            PPO Multi-Agent Training
+            MAPPO Multi-Agent Training
           </span>
           <span className="text-xs font-bold text-zinc-500">{isRlOpen ? '▲' : '▼'}</span>
         </div>
@@ -285,7 +285,7 @@ export default function RightBar({
                 {isRlTraining ? (
                   <div className="space-y-1.5">
                     <div className="flex justify-between text-[9px] font-mono text-violet-500">
-                      <span>Training PPO...</span>
+                      <span>Training MAPPO...</span>
                       <span>Ep {rlEpisode} / {rlEpisodesInput}</span>
                     </div>
                     <div className="w-full h-1.5 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
@@ -313,7 +313,7 @@ export default function RightBar({
                       onClick={() => onTrainRL(rlEpisodesInput, rlLrInput)}
                       className="w-full py-2 rounded-xl text-[10px] font-bold text-white bg-gradient-to-r from-violet-500 to-indigo-500 hover:opacity-95 shadow-lg shadow-violet-500/25 transition-all text-center cursor-pointer"
                     >
-                      Train RL Agents (PPO)
+                      Train RL Agents (MAPPO)
                     </button>
 
                     <div className="border-t border-black/5 dark:border-white/5 pt-3 space-y-2">

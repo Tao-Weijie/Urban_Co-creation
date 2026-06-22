@@ -7,7 +7,7 @@ import {
   TopologyData,
   TopologyMetadata,
   ActionType
-} from '@/rules/topology';
+} from '@/game_engine/topology';
 
 import Viewport3D from '@/components/3DViewport';
 import LeftBar from '@/components/LeftBar';
@@ -24,8 +24,8 @@ import {
   clearAllCachedModels,
   getRLActionRecommendation,
   RLTrainingMetrics
-} from '@/rules/training';
-import { tsEngine } from '@/rules/tsEngine';
+} from '@/game_engine/training';
+import { tsEngine } from '@/game_engine/tsEngine';
 
 export default function Home() {
   // Theme state
@@ -700,7 +700,7 @@ export default function Home() {
 
   // DQN Reinforcement Learning Training Handler using TensorFlow.js in the browser
   const handleTrainRL = async (episodes: number, lr: number) => {
-    if (!topologyData) {
+    if (!originalTopologyData) {
       alert("Please upload a grid topology JSON first.");
       return;
     }
@@ -714,7 +714,7 @@ export default function Home() {
       rlCancelledRef.current = false;
 
       await trainRL(
-        topologyData,
+        originalTopologyData,
         episodes,
         lr,
         (metrics: RLTrainingMetrics) => {
@@ -759,7 +759,7 @@ export default function Home() {
     try {
       await loadRLModelFromSingleFile(file);
       setIsRlLoaded(true);
-      alert("PPO models successfully loaded from the unified file!");
+      alert("MAPPO models successfully loaded from the unified file!");
     } catch (err: any) {
       console.error(err);
       alert("Failed to load models: " + err.message);
@@ -841,7 +841,7 @@ export default function Home() {
         onEndGame={handleResetGame}
       />
 
-      {/* PPO Training Right Sidebar */}
+      {/* MAPPO Training Right Sidebar */}
       <RightBar
         hasTopologyData={topologyData !== null}
         isRlTraining={isRlTraining}

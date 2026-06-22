@@ -1,5 +1,5 @@
 import React from 'react';
-import { UrbanUnit, TopologyData } from '@/rules/topology';
+import { UrbanUnit, TopologyData } from '@/game_engine/topology';
 
 interface HoverPanelProps {
   hoveredUnitInfo: UrbanUnit | null;

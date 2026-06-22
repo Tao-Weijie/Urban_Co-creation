@@ -1,5 +1,5 @@
 import React from 'react';
-import { UrbanUnit, ActionType } from '@/rules/topology';
+import { UrbanUnit, ActionType } from '@/game_engine/topology';
 
 interface GameActionModalProps {
   isOpen: boolean;

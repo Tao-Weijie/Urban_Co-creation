@@ -33,30 +33,33 @@ export function encodeGraphState(graph: TopologyData): number[] {
   return features;
 }
 
-// Global persistent tfjs model variables for PPO (Actor and Critic networks)
-export let developerRLModel: tf.LayersModel | null = null;       // Actor
-export let developerCriticModel: tf.LayersModel | null = null;   // Critic
-export let governmentRLModel: tf.LayersModel | null = null;      // Actor
-export let governmentCriticModel: tf.LayersModel | null = null;  // Critic
+// Global persistent tfjs model variables for MAPPO (Actor and Centralized Critic networks)
+export let developerRLModel: tf.LayersModel | null = null;         // Actor
+export let governmentRLModel: tf.LayersModel | null = null;        // Actor
+export let centralizedCriticModel: tf.LayersModel | null = null;   // Centralized Critic (Outputs [V_dev, V_gov])
 
 /**
- * Initializes or retrieves existing persistent RL Actor and Critic models.
+ * Initializes or retrieves existing persistent RL Actor and Centralized Critic models.
  */
 export function initOrGetRLModels(inputSize: number, outputSize: number): {
   developerModel: tf.LayersModel;
-  developerCriticModel: tf.LayersModel;
   governmentModel: tf.LayersModel;
-  governmentCriticModel: tf.LayersModel;
+  centralizedCriticModel: tf.LayersModel;
 } {
   if (developerRLModel) {
-    console.log("[PPO] Reusing existing loaded/trained Developer Actor model.");
+    console.log("[MAPPO] Reusing existing loaded/trained Developer Actor model.");
   } else {
-    console.log("[PPO] Initializing new Developer Actor & Critic models.");
+    console.log("[MAPPO] Initializing new Developer Actor model.");
   }
   if (governmentRLModel) {
-    console.log("[PPO] Reusing existing loaded/trained Government Actor model.");
+    console.log("[MAPPO] Reusing existing loaded/trained Government Actor model.");
   } else {
-    console.log("[PPO] Initializing new Government Actor & Critic models.");
+    console.log("[MAPPO] Initializing new Government Actor model.");
+  }
+  if (centralizedCriticModel) {
+    console.log("[MAPPO] Reusing existing loaded/trained Centralized Critic model.");
+  } else {
+    console.log("[MAPPO] Initializing new Centralized Critic model.");
   }
 
   if (!developerRLModel) {
@@ -66,13 +69,6 @@ export function initOrGetRLModels(inputSize: number, outputSize: number): {
     actor.add(tf.layers.dense({ units: 32, activation: 'relu' }));
     actor.add(tf.layers.dense({ units: outputSize })); // Logits output (linear)
     developerRLModel = actor;
-
-    // Developer Critic (State-Value network)
-    const critic = tf.sequential();
-    critic.add(tf.layers.dense({ inputShape: [inputSize], units: 64, activation: 'relu' }));
-    critic.add(tf.layers.dense({ units: 32, activation: 'relu' }));
-    critic.add(tf.layers.dense({ units: 1 })); // State-value scalar output
-    developerCriticModel = critic;
   }
 
   if (!governmentRLModel) {
@@ -82,20 +78,21 @@ export function initOrGetRLModels(inputSize: number, outputSize: number): {
     actor.add(tf.layers.dense({ units: 32, activation: 'relu' }));
     actor.add(tf.layers.dense({ units: outputSize })); // Logits output (linear)
     governmentRLModel = actor;
+  }
 
-    // Government Critic (State-Value network)
+  if (!centralizedCriticModel) {
+    // Centralized Critic (State-Value network for both agents: [V_dev, V_gov])
     const critic = tf.sequential();
     critic.add(tf.layers.dense({ inputShape: [inputSize], units: 64, activation: 'relu' }));
     critic.add(tf.layers.dense({ units: 32, activation: 'relu' }));
-    critic.add(tf.layers.dense({ units: 1 })); // State-value scalar output
-    governmentCriticModel = critic;
+    critic.add(tf.layers.dense({ units: 2 })); // 2 outputs: [V_dev, V_gov]
+    centralizedCriticModel = critic;
   }
 
   return {
     developerModel: developerRLModel,
-    developerCriticModel: developerCriticModel!,
     governmentModel: governmentRLModel,
-    governmentCriticModel: governmentCriticModel!
+    centralizedCriticModel: centralizedCriticModel
   };
 }
 
@@ -104,9 +101,8 @@ export function initOrGetRLModels(inputSize: number, outputSize: number): {
  */
 export async function clearAllCachedModels(): Promise<void> {
   developerRLModel = null;
-  developerCriticModel = null;
   governmentRLModel = null;
-  governmentCriticModel = null;
+  centralizedCriticModel = null;
 
   try {
     await tf.io.removeModel('indexeddb://developer-ppo-model');
@@ -190,20 +186,21 @@ export async function trainRL(
   if (tf.getBackend() !== backend) {
     try {
       await tf.setBackend(backend);
-      console.log(`[PPO] Switched backend to: ${backend}`);
+      console.log(`[MAPPO] Switched backend to: ${backend}`);
     } catch (e) {
-      console.warn(`[PPO] Failed to switch to backend ${backend}:`, e);
+      console.warn(`[MAPPO] Failed to switch to backend ${backend}:`, e);
     }
   }
   const N = graph.units.length;
   const inputSize = N * 4;
   const outputSize = N + 1; // N slots + 1 SKIP
 
-  const { developerModel, developerCriticModel, governmentModel, governmentCriticModel } = initOrGetRLModels(inputSize, outputSize);
+  const { developerModel, governmentModel, centralizedCriticModel } = initOrGetRLModels(inputSize, outputSize);
 
-  // Setup optimizers for both agents
+  // Setup optimizers for actors and the centralized critic
   const devOptimizer = tf.train.adam(learningRate);
   const govOptimizer = tf.train.adam(learningRate);
+  const criticOptimizer = tf.train.adam(learningRate);
 
   const gamma = 0.90;
   const clipVal = 0.2;
@@ -255,16 +252,16 @@ export async function trainRL(
       const activePlayer = episodeState.metadata.next_player ?? 1;
 
       const actorModel = activePlayer === 1 ? developerModel : governmentModel;
-      const criticModel = activePlayer === 1 ? developerCriticModel : governmentCriticModel;
 
-      // Forward pass to get action logits and state value
+      // Forward pass to get action logits and state value from Centralized Critic
       const { logits, stateValue } = tf.tidy(() => {
         const xs = tf.tensor2d([stateFeatures]);
         const l = actorModel.predict(xs) as tf.Tensor;
-        const v = criticModel.predict(xs) as tf.Tensor;
+        const v = centralizedCriticModel.predict(xs) as tf.Tensor; // outputs [V_dev, V_gov]
+        const vData = v.dataSync();
         return {
           logits: Array.from(l.dataSync()),
-          stateValue: v.dataSync()[0]
+          stateValue: activePlayer === 1 ? vData[0] : vData[1]
         };
       });
 
@@ -356,171 +353,233 @@ export async function trainRL(
 
     if (isCancelled()) break;
 
-    // 2. Perform policy and value gradient optimization using trajectory buffers
-    interface OptimizationMetrics {
-      avgLoss: number;
-      actorLoss: number;
-      criticLoss: number;
-      entropy: number;
+    // 2. Perform centralized critic and actor gradient optimization using trajectory buffers
+    let devMetrics = { actorLoss: 0, entropy: 0 };
+    let govMetrics = { actorLoss: 0, entropy: 0 };
+    let avgLoss = 0;
+    let devCriticLoss = 0;
+    let govCriticLoss = 0;
+
+    // Bootstrap values for terminal/non-terminal states from centralized critic
+    let lastValDev = 0;
+    let lastValGov = 0;
+    if (!finalDone) {
+      const vData = tf.tidy(() => {
+        const xs = tf.tensor2d([finalStateFeatures]);
+        return (centralizedCriticModel.predict(xs) as tf.Tensor).dataSync();
+      });
+      lastValDev = vData[0];
+      lastValGov = vData[1];
     }
 
-    const optimizeAgent = async (
-      actorModel: tf.LayersModel,
-      criticModel: tf.LayersModel,
-      optimizer: tf.Optimizer,
-      buffer: Transition[],
-      lastStateFeatures: number[],
-      done: boolean
-    ): Promise<OptimizationMetrics> => {
-      if (buffer.length === 0) {
-        return { avgLoss: 0, actorLoss: 0, criticLoss: 0, entropy: 0 };
-      }
+    // Prepare Developer returns & advantages
+    const devT = developerBuffer.length;
+    const devReturns: number[][] = new Array(devT);
+    const devAdvantages: number[] = new Array(devT);
+    let G_dev = lastValDev;
+    for (let t = devT - 1; t >= 0; t--) {
+      G_dev = developerBuffer[t].reward + gamma * G_dev;
+      devReturns[t] = [G_dev];
+      devAdvantages[t] = G_dev - developerBuffer[t].value;
+    }
 
-      const T = buffer.length;
-      const returns: number[][] = new Array(T);
-      const advantages: number[] = new Array(T);
+    // Standardize Developer advantages
+    let normalizedDevAdvantages: number[] = [];
+    if (devT > 0) {
+      const meanDev = devAdvantages.reduce((a, b) => a + b, 0) / devT;
+      const varDev = devAdvantages.reduce((a, b) => a + Math.pow(b - meanDev, 2), 0) / devT;
+      const stdDev = Math.sqrt(varDev) + 1e-8;
+      normalizedDevAdvantages = devAdvantages.map(a => (a - meanDev) / stdDev);
+    }
 
-      // Bootstrap value for terminal/non-terminal states
-      let nextVal = 0;
-      if (!done) {
-        nextVal = tf.tidy(() => {
-          const xs = tf.tensor2d([lastStateFeatures]);
-          return (criticModel.predict(xs) as tf.Tensor).dataSync()[0];
-        });
-      }
+    // Prepare Government returns & advantages
+    const govT = governmentBuffer.length;
+    const govReturns: number[][] = new Array(govT);
+    const govAdvantages: number[] = new Array(govT);
+    let G_gov = lastValGov;
+    for (let t = govT - 1; t >= 0; t--) {
+      G_gov = governmentBuffer[t].reward + gamma * G_gov;
+      govReturns[t] = [G_gov];
+      govAdvantages[t] = G_gov - governmentBuffer[t].value;
+    }
 
-      let G = nextVal;
-      for (let t = T - 1; t >= 0; t--) {
-        G = buffer[t].reward + gamma * G;
-        returns[t] = [G];
-        advantages[t] = G - buffer[t].value;
-      }
+    // Standardize Government advantages
+    let normalizedGovAdvantages: number[] = [];
+    if (govT > 0) {
+      const meanGov = govAdvantages.reduce((a, b) => a + b, 0) / govT;
+      const varGov = govAdvantages.reduce((a, b) => a + Math.pow(b - meanGov, 2), 0) / govT;
+      const stdGov = Math.sqrt(varGov) + 1e-8;
+      normalizedGovAdvantages = govAdvantages.map(a => (a - meanGov) / stdGov);
+    }
 
-      // Standardize advantages
-      const mean = advantages.reduce((a, b) => a + b, 0) / T;
-      const variance = advantages.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / T;
-      const std = Math.sqrt(variance) + 1e-8;
-      const normalizedAdvantages = advantages.map(a => (a - mean) / std);
+    // Pre-create tensors outside the epoch optimization loop to avoid memory leaks/re-creation overhead
+    let devStatesTensor: tf.Tensor2D | null = null;
+    let devActionsTensor: tf.Tensor1D | null = null;
+    let devOldLogProbsTensor: tf.Tensor1D | null = null;
+    let devReturnsTensor: tf.Tensor2D | null = null;
+    let devAdvantagesTensor: tf.Tensor1D | null = null;
+    let devMasksTensor: tf.Tensor2D | null = null;
 
-      // Prepare training tensors
-      const statesTensor = tf.tensor2d(buffer.map(t => t.state));
-      const actionsTensor = tf.tensor1d(buffer.map(t => t.actionIdx), 'int32');
-      const oldLogProbsTensor = tf.tensor1d(buffer.map(t => t.oldLogProb));
-      const returnsTensor = tf.tensor2d(returns);
-      const advantagesTensor = tf.tensor1d(normalizedAdvantages);
-      const masksTensor = tf.tensor2d(buffer.map(t => t.mask));
+    if (devT > 0) {
+      devStatesTensor = tf.tensor2d(developerBuffer.map(t => t.state));
+      devActionsTensor = tf.tensor1d(developerBuffer.map(t => t.actionIdx), 'int32');
+      devOldLogProbsTensor = tf.tensor1d(developerBuffer.map(t => t.oldLogProb));
+      devReturnsTensor = tf.tensor2d(devReturns);
+      devAdvantagesTensor = tf.tensor1d(normalizedDevAdvantages);
+      devMasksTensor = tf.tensor2d(developerBuffer.map(t => t.mask));
+    }
 
-      let totalEpochLoss = 0;
-      let totalActorLoss = 0;
-      let totalCriticLoss = 0;
-      let totalEntropy = 0;
+    let govStatesTensor: tf.Tensor2D | null = null;
+    let govActionsTensor: tf.Tensor1D | null = null;
+    let govOldLogProbsTensor: tf.Tensor1D | null = null;
+    let govReturnsTensor: tf.Tensor2D | null = null;
+    let govAdvantagesTensor: tf.Tensor1D | null = null;
+    let govMasksTensor: tf.Tensor2D | null = null;
 
-      for (let epoch = 0; epoch < epochs; epoch++) {
-        let epochActorLoss = 0;
-        let epochCriticLoss = 0;
-        let epochEntropy = 0;
+    if (govT > 0) {
+      govStatesTensor = tf.tensor2d(governmentBuffer.map(t => t.state));
+      govActionsTensor = tf.tensor1d(governmentBuffer.map(t => t.actionIdx), 'int32');
+      govOldLogProbsTensor = tf.tensor1d(governmentBuffer.map(t => t.oldLogProb));
+      govReturnsTensor = tf.tensor2d(govReturns);
+      govAdvantagesTensor = tf.tensor1d(normalizedGovAdvantages);
+      govMasksTensor = tf.tensor2d(governmentBuffer.map(t => t.mask));
+    }
 
-        const lossTensor = optimizer.minimize(() => {
-          const logits = actorModel.predict(statesTensor) as tf.Tensor;
-          const values = criticModel.predict(statesTensor) as tf.Tensor;
+    let totalEpochDevActorLoss = 0;
+    let totalEpochDevEntropy = 0;
+    let totalEpochGovActorLoss = 0;
+    let totalEpochGovEntropy = 0;
+    let totalEpochDevCriticLoss = 0;
+    let totalEpochGovCriticLoss = 0;
 
-          // Mask invalid action logits to -1e9
-          const maskedLogits = tf.where(masksTensor.greater(0), logits, tf.fill(logits.shape, -1e9));
+    for (let epoch = 0; epoch < epochs; epoch++) {
+      // 1. Optimize Developer Actor (Policy network)
+      if (devT > 0 && devStatesTensor && devActionsTensor && devOldLogProbsTensor && devAdvantagesTensor && devMasksTensor) {
+        let epDevActorLoss = 0;
+        let epDevEntropy = 0;
+        const lossTensor = devOptimizer.minimize(() => {
+          const logits = developerModel.predict(devStatesTensor!) as tf.Tensor;
+          const maskedLogits = tf.where(devMasksTensor!.greater(0), logits, tf.fill(logits.shape, -1e9));
           const probs = tf.softmax(maskedLogits);
-
-          // Get action probability and log probability
-          const newProbs = tf.sum(probs.mul(tf.oneHot(actionsTensor, outputSize)), 1);
+          const newProbs = tf.sum(probs.mul(tf.oneHot(devActionsTensor!, outputSize)), 1);
           const newLogProbs = tf.log(newProbs.add(1e-8));
-
-          // Ratio
-          const ratio = tf.exp(newLogProbs.sub(oldLogProbsTensor));
-
-          // Clipped policy loss
-          const surr1 = ratio.mul(advantagesTensor);
-          const surr2 = tf.clipByValue(ratio, 1.0 - clipVal, 1.0 + clipVal).mul(advantagesTensor);
+          const ratio = tf.exp(newLogProbs.sub(devOldLogProbsTensor!));
+          const surr1 = ratio.mul(devAdvantagesTensor!);
+          const surr2 = tf.clipByValue(ratio, 1.0 - clipVal, 1.0 + clipVal).mul(devAdvantagesTensor!);
           const actorLoss = tf.mean(tf.minimum(surr1, surr2)).neg();
-
-          // Critic value loss (MSE)
-          const criticLoss = tf.losses.meanSquaredError(returnsTensor, values);
-
-          // Entropy regularization bonus
           const entropy = tf.mean(tf.sum(probs.mul(tf.log(probs.add(1e-8))).neg(), 1));
+          const loss = actorLoss.sub(entropy.mul(0.01));
 
-          // Joint loss: actorLoss + 0.5 * criticLoss - 0.01 * entropy
-          const loss = actorLoss.add(criticLoss.mul(0.5)).sub(entropy.mul(0.01));
-
-          // Extract values synchronously for display
-          epochActorLoss = actorLoss.dataSync()[0];
-          epochCriticLoss = criticLoss.dataSync()[0];
-          epochEntropy = entropy.dataSync()[0];
-
+          epDevActorLoss = actorLoss.dataSync()[0];
+          epDevEntropy = entropy.dataSync()[0];
           return loss as tf.Scalar;
-        }, true, [
-          ...actorModel.trainableWeights.map((w: any) => w.val),
-          ...criticModel.trainableWeights.map((w: any) => w.val)
-        ]);
-
+        }, true, developerModel.trainableWeights.map((w: any) => w.val));
         if (lossTensor) {
-          totalEpochLoss += lossTensor.dataSync()[0];
+          totalEpochDevActorLoss += epDevActorLoss;
+          totalEpochDevEntropy += epDevEntropy;
           lossTensor.dispose();
         }
-
-        totalActorLoss += epochActorLoss;
-        totalCriticLoss += epochCriticLoss;
-        totalEntropy += epochEntropy;
       }
 
-      // Dispose epoch-level batch tensors
-      statesTensor.dispose();
-      actionsTensor.dispose();
-      oldLogProbsTensor.dispose();
-      returnsTensor.dispose();
-      advantagesTensor.dispose();
-      masksTensor.dispose();
+      // 2. Optimize Government Actor (Policy network)
+      if (govT > 0 && govStatesTensor && govActionsTensor && govOldLogProbsTensor && govAdvantagesTensor && govMasksTensor) {
+        let epGovActorLoss = 0;
+        let epGovEntropy = 0;
+        const lossTensor = govOptimizer.minimize(() => {
+          const logits = governmentModel.predict(govStatesTensor!) as tf.Tensor;
+          const maskedLogits = tf.where(govMasksTensor!.greater(0), logits, tf.fill(logits.shape, -1e9));
+          const probs = tf.softmax(maskedLogits);
+          const newProbs = tf.sum(probs.mul(tf.oneHot(govActionsTensor!, outputSize)), 1);
+          const newLogProbs = tf.log(newProbs.add(1e-8));
+          const ratio = tf.exp(newLogProbs.sub(govOldLogProbsTensor!));
+          const surr1 = ratio.mul(govAdvantagesTensor!);
+          const surr2 = tf.clipByValue(ratio, 1.0 - clipVal, 1.0 + clipVal).mul(govAdvantagesTensor!);
+          const actorLoss = tf.mean(tf.minimum(surr1, surr2)).neg();
+          const entropy = tf.mean(tf.sum(probs.mul(tf.log(probs.add(1e-8))).neg(), 1));
+          const loss = actorLoss.sub(entropy.mul(0.01));
 
-      return {
-        avgLoss: totalEpochLoss / epochs,
-        actorLoss: totalActorLoss / epochs,
-        criticLoss: totalCriticLoss / epochs,
-        entropy: totalEntropy / epochs
-      };
-    };
+          epGovActorLoss = actorLoss.dataSync()[0];
+          epGovEntropy = entropy.dataSync()[0];
+          return loss as tf.Scalar;
+        }, true, governmentModel.trainableWeights.map((w: any) => w.val));
+        if (lossTensor) {
+          totalEpochGovActorLoss += epGovActorLoss;
+          totalEpochGovEntropy += epGovEntropy;
+          lossTensor.dispose();
+        }
+      }
+
+      // 3. Optimize Centralized Critic network
+      let epDevCriticLoss = 0;
+      let epGovCriticLoss = 0;
+      const cLossTensor = criticOptimizer.minimize(() => {
+        let loss = tf.scalar(0);
+        if (devT > 0 && devStatesTensor && devReturnsTensor) {
+          const devPreds = centralizedCriticModel.predict(devStatesTensor!) as tf.Tensor;
+          const devPredValues = tf.slice(devPreds, [0, 0], [-1, 1]); // index 0 is Developer
+          const cLoss = tf.losses.meanSquaredError(devReturnsTensor!, devPredValues);
+          epDevCriticLoss = cLoss.dataSync()[0];
+          loss = loss.add(cLoss);
+        }
+        if (govT > 0 && govStatesTensor && govReturnsTensor) {
+          const govPreds = centralizedCriticModel.predict(govStatesTensor!) as tf.Tensor;
+          const govPredValues = tf.slice(govPreds, [0, 1], [-1, 1]); // index 1 is Government
+          const cLoss = tf.losses.meanSquaredError(govReturnsTensor!, govPredValues);
+          epGovCriticLoss = cLoss.dataSync()[0];
+          loss = loss.add(cLoss);
+        }
+        return loss as tf.Scalar;
+      }, true, centralizedCriticModel.trainableWeights.map((w: any) => w.val));
+      if (cLossTensor) {
+        totalEpochDevCriticLoss += epDevCriticLoss;
+        totalEpochGovCriticLoss += epGovCriticLoss;
+        cLossTensor.dispose();
+      }
+    }
+
+    // Clean up pre-created tensors
+    if (devStatesTensor) devStatesTensor.dispose();
+    if (devActionsTensor) devActionsTensor.dispose();
+    if (devOldLogProbsTensor) devOldLogProbsTensor.dispose();
+    if (devReturnsTensor) devReturnsTensor.dispose();
+    if (devAdvantagesTensor) devAdvantagesTensor.dispose();
+    if (devMasksTensor) devMasksTensor.dispose();
+
+    if (govStatesTensor) govStatesTensor.dispose();
+    if (govActionsTensor) govActionsTensor.dispose();
+    if (govOldLogProbsTensor) govOldLogProbsTensor.dispose();
+    if (govReturnsTensor) govReturnsTensor.dispose();
+    if (govAdvantagesTensor) govAdvantagesTensor.dispose();
+    if (govMasksTensor) govMasksTensor.dispose();
+
+    // Average the epoch metrics
+    devMetrics = { actorLoss: totalEpochDevActorLoss / epochs, entropy: totalEpochDevEntropy / epochs };
+    govMetrics = { actorLoss: totalEpochGovActorLoss / epochs, entropy: totalEpochGovEntropy / epochs };
+    devCriticLoss = totalEpochDevCriticLoss / epochs;
+    govCriticLoss = totalEpochGovCriticLoss / epochs;
+    avgLoss = (devCriticLoss + govCriticLoss) / 2;
 
     const devReward = developerBuffer.reduce((sum, t) => sum + t.reward, 0);
     const govReward = governmentBuffer.reduce((sum, t) => sum + t.reward, 0);
 
-    let devMetrics = { avgLoss: 0, actorLoss: 0, criticLoss: 0, entropy: 0 };
-    let govMetrics = { avgLoss: 0, actorLoss: 0, criticLoss: 0, entropy: 0 };
-
-    if (developerBuffer.length > 0) {
-      devMetrics = await optimizeAgent(developerModel, developerCriticModel, devOptimizer, developerBuffer, finalStateFeatures, finalDone);
-    }
-    if (governmentBuffer.length > 0) {
-      govMetrics = await optimizeAgent(governmentModel, governmentCriticModel, govOptimizer, governmentBuffer, finalStateFeatures, finalDone);
-    }
-
-    const avgLoss = (devMetrics.avgLoss + govMetrics.avgLoss) / 2;
-    
-    // 1. Throttle heavy React UI updates to every 10 episodes to prevent rendering bottlenecks
+    // Throttle React UI updates to every 10 episodes
     const shouldUpdateUI = (ep + 1) % 10 === 0 || ep === episodes - 1;
     if (shouldUpdateUI) {
       onEpisodeEnd({
         episode: ep + 1,
         avgLoss,
         devActorLoss: devMetrics.actorLoss,
-        devCriticLoss: devMetrics.criticLoss,
+        devCriticLoss,
         devEntropy: devMetrics.entropy,
         devReward,
         govActorLoss: govMetrics.actorLoss,
-        govCriticLoss: govMetrics.criticLoss,
+        govCriticLoss,
         govEntropy: govMetrics.entropy,
         govReward
       });
     }
 
-    // 2. Yield control to the browser event loop on EVERY episode using setTimeout(0).
-    // This keeps the browser UI thread completely smooth (preventing freezes)
-    // without the 16.6ms frame rate limitation of requestAnimationFrame.
+    // Yield control to the browser event loop
     await new Promise(resolve => setTimeout(resolve, 0));
   }
 }
@@ -662,7 +721,7 @@ export async function saveRLModels(): Promise<void> {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'urban-ppo-models.json';
+  a.download = 'urban-mappo-models.json';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -707,17 +766,10 @@ export async function loadRLModelFromSingleFile(jsonFile: File): Promise<void> {
 
   const inputSize = devModel.inputs[0].shape[1] || 100;
 
-  // Re-initialize Developer Critic network
-  const devCritic = tf.sequential();
-  devCritic.add(tf.layers.dense({ inputShape: [inputSize], units: 64, activation: 'relu' }));
-  devCritic.add(tf.layers.dense({ units: 32, activation: 'relu' }));
-  devCritic.add(tf.layers.dense({ units: 1 }));
-  developerCriticModel = devCritic;
-
-  // Re-initialize Government Critic network
-  const govCritic = tf.sequential();
-  govCritic.add(tf.layers.dense({ inputShape: [inputSize], units: 64, activation: 'relu' }));
-  govCritic.add(tf.layers.dense({ units: 32, activation: 'relu' }));
-  govCritic.add(tf.layers.dense({ units: 1 }));
-  governmentCriticModel = govCritic;
+  // Re-initialize Centralized Critic network
+  const critic = tf.sequential();
+  critic.add(tf.layers.dense({ inputShape: [inputSize], units: 64, activation: 'relu' }));
+  critic.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+  critic.add(tf.layers.dense({ units: 2 })); // 2 outputs: [V_dev, V_gov]
+  centralizedCriticModel = critic;
 }
