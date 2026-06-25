@@ -1,5 +1,6 @@
 import * as tf from '@tensorflow/tfjs';
-import { tsEngine } from './tsEngine';
+import { tsEngine, PlayerType } from './tsEngine';
+
 
 export interface TopologyData {
   metadata: {
@@ -20,15 +21,79 @@ export interface TopologyData {
 }
 
 /**
- * Encodes the graph state into a flat array of features for TF.js.
+ * Builds a block-id → neighbour-block-ids lookup map from the static topology.
+ * Blocks never change during a game, so this is computed once per training run.
  */
-export function encodeGraphState(graph: TopologyData): number[] {
+export function buildNeighborMap(blocks: any[]): Map<number, number[]> {
+  const map = new Map<number, number[]>();
+  for (const b of blocks) {
+    map.set(Number(b.id), (b.neighbor || []).map(Number));
+  }
+  return map;
+}
+
+/**
+ * Encodes the graph state into a flat array of features for TF.js.
+ * Per-unit features (7 per unit):
+ *   [is_empty, is_residential, is_green, height_norm, value_norm,
+ *    dev_potential, gov_influence]
+ *
+ * dev_potential  — estimated developer net profit if this cell becomes residential,
+ *                  derived from the evaluate() formula (normalised by 50 000).
+ * gov_influence  — estimated government tax gain if this cell becomes green, based
+ *                  on neighbouring residential density (normalised by 10 000).
+ */
+export function encodeGraphState(
+  graph: TopologyData,
+  neighborMap?: Map<number, number[]>
+): number[] {
+  // Build block → units index for neighbour lookups
+  const blockUnits = new Map<number, any[]>();
+  for (const u of graph.units) {
+    const pid = Number(u.parentid ?? -1);
+    if (!blockUnits.has(pid)) blockUnits.set(pid, []);
+    blockUnits.get(pid)!.push(u);
+  }
+
+  // Evaluation constants (mirror of tsEngine evaluate())
+  const P_max = 150.0, mu = 60.0, sigma = 20.0;
+
   const features: number[] = [];
   for (const u of graph.units) {
-    features.push(u.type === 0 ? 1 : 0); // Empty
-    features.push(u.type === 1 ? 1 : 0); // Residential
-    features.push(u.type === 2 ? 1 : 0); // Green
-    features.push((u.height ?? 1) / 10.0);
+    const v   = u.value  ?? 30;
+    const h   = u.height ?? 1;
+    const pid = Number(u.parentid ?? -1);
+
+    features.push(u.type === 0 ? 1 : 0);       // is_empty
+    features.push(u.type === 1 ? 1 : 0);       // is_residential
+    features.push(u.type === 2 ? 1 : 0);       // is_green
+    features.push(h / 10.0);                   // height normalised
+    features.push(v / 100.0);                  // land value (evaluation knowledge)
+
+    // --- dev_potential ---
+    // Estimated developer net profit if this unit becomes residential.
+    // Formula: revenue = pop × v × 0.5;  cost = v × h × 10
+    const pop_per_floor = P_max * Math.exp(-Math.pow(v - mu, 2) / (2 * sigma * sigma));
+    const est_pop  = Math.round(pop_per_floor) * h;
+    const dev_gain = Math.max(0, est_pop * v * 0.5 - v * h * 10);
+    features.push(Math.min(1, dev_gain / 50000.0));
+
+    // --- gov_influence ---
+    // Government earns tax from residential units (land_price + population_tax).
+    // Placing green at this cell increases neighbouring residential values.
+    // Proxy: count same-block + neighbour residential units × base tax rate.
+    let gov_gain = 0;
+    if (neighborMap) {
+      const neighborIds = neighborMap.get(pid) ?? [];
+      const sameRes = (blockUnits.get(pid) ?? []).filter((bu: any) => bu.type === 1).length;
+      let nbRes = 0;
+      for (const nid of neighborIds) {
+        nbRes += (blockUnits.get(nid) ?? []).filter((nu: any) => nu.type === 1).length;
+      }
+      // Approximate tax boost: each nearby residential unit contributes ~500 tax units
+      gov_gain = (sameRes + nbRes * 0.5) * 500;
+    }
+    features.push(Math.min(1, gov_gain / 10000.0));
   }
   return features;
 }
@@ -64,9 +129,10 @@ export function initOrGetRLModels(inputSize: number, outputSize: number): {
 
   if (!developerRLModel) {
     // Developer Actor (Policy network)
+    // Hidden layers scaled for ~300-unit maps (inputSize ≈ 1500)
     const actor = tf.sequential();
-    actor.add(tf.layers.dense({ inputShape: [inputSize], units: 64, activation: 'relu' }));
-    actor.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+    actor.add(tf.layers.dense({ inputShape: [inputSize], units: 256, activation: 'relu' }));
+    actor.add(tf.layers.dense({ units: 128, activation: 'relu' }));
     actor.add(tf.layers.dense({ units: outputSize })); // Logits output (linear)
     developerRLModel = actor;
   }
@@ -74,17 +140,17 @@ export function initOrGetRLModels(inputSize: number, outputSize: number): {
   if (!governmentRLModel) {
     // Government Actor (Policy network)
     const actor = tf.sequential();
-    actor.add(tf.layers.dense({ inputShape: [inputSize], units: 64, activation: 'relu' }));
-    actor.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+    actor.add(tf.layers.dense({ inputShape: [inputSize], units: 256, activation: 'relu' }));
+    actor.add(tf.layers.dense({ units: 128, activation: 'relu' }));
     actor.add(tf.layers.dense({ units: outputSize })); // Logits output (linear)
     governmentRLModel = actor;
   }
 
   if (!centralizedCriticModel) {
-    // Centralized Critic (State-Value network for both agents: [V_dev, V_gov])
+    // Centralized Critic: wider network to evaluate combined state of both agents
     const critic = tf.sequential();
-    critic.add(tf.layers.dense({ inputShape: [inputSize], units: 64, activation: 'relu' }));
-    critic.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+    critic.add(tf.layers.dense({ inputShape: [inputSize], units: 256, activation: 'relu' }));
+    critic.add(tf.layers.dense({ units: 128, activation: 'relu' }));
     critic.add(tf.layers.dense({ units: 2 })); // 2 outputs: [V_dev, V_gov]
     centralizedCriticModel = critic;
   }
@@ -192,7 +258,7 @@ export async function trainRL(
     }
   }
   const N = graph.units.length;
-  const inputSize = N * 4;
+  const inputSize = N * 7; // 7 features per unit: [is_empty, is_res, is_green, height, value, dev_potential, gov_influence]
   const outputSize = N + 1; // N slots + 1 SKIP
 
   const { developerModel, governmentModel, centralizedCriticModel } = initOrGetRLModels(inputSize, outputSize);
@@ -202,10 +268,16 @@ export async function trainRL(
   const govOptimizer = tf.train.adam(learningRate);
   const criticOptimizer = tf.train.adam(learningRate);
 
-  const gamma = 0.90;
+  const gamma = 0.97;  // Effective horizon ≈ 1/(1-γ) = 33 steps; covers long-range placement strategies
   const clipVal = 0.2;
   const epochs = 4; // number of PPO optimization epochs per rollout
-  const maxSteps = 100;
+
+  // Dynamic maxSteps: each player needs N/2 steps to potentially fill all units.
+  // Add 50% buffer for SKIP actions and exploration → ceil(N × 1.5), minimum 150.
+  const maxSteps = Math.max(150, Math.ceil(N * 1.5));
+
+  // Pre-compute block neighbour map once — blocks are static throughout the episode.
+  const neighborMap = buildNeighborMap(graph.blocks);
 
   // Clean starting graph JSON for stateless payloads
   const startingGraphPayload = {
@@ -228,7 +300,7 @@ export async function trainRL(
     });
     let stepCount = 0;
 
-    let finalStateFeatures = encodeGraphState(episodeState);
+    let finalStateFeatures = encodeGraphState(episodeState, neighborMap);
     let finalDone = false;
 
     // On-policy rollout collection loop
@@ -248,10 +320,13 @@ export async function trainRL(
         break;
       }
 
-      const stateFeatures = encodeGraphState(episodeState);
-      const activePlayer = episodeState.metadata.next_player ?? 1;
+      const stateFeatures = encodeGraphState(episodeState, neighborMap);
+      const activePlayer = episodeState.metadata.next_player ?? PlayerType.DEVELOPER;
+      if (activePlayer !== PlayerType.DEVELOPER && activePlayer !== PlayerType.GOVERNMENT) {
+        throw new TypeError(`Invalid PlayerType value: ${activePlayer}`);
+      }
 
-      const actorModel = activePlayer === 1 ? developerModel : governmentModel;
+      const actorModel = activePlayer === PlayerType.DEVELOPER ? developerModel : governmentModel;
 
       // Forward pass to get action logits and state value from Centralized Critic
       const { logits, stateValue } = tf.tidy(() => {
@@ -261,7 +336,7 @@ export async function trainRL(
         const vData = v.dataSync();
         return {
           logits: Array.from(l.dataSync()),
-          stateValue: activePlayer === 1 ? vData[0] : vData[1]
+          stateValue: activePlayer === PlayerType.DEVELOPER ? vData[0] : vData[1]
         };
       });
 
@@ -318,15 +393,29 @@ export async function trainRL(
 
       // Reward computation
       let reward = 0;
-      if (activePlayer === 1) { // Developer
+      if (activePlayer === PlayerType.DEVELOPER) { // Developer
         reward = (nextMetrics.developer_profit - lastMetrics.developer_profit) / 1000.0;
       } else { // Government
         reward = (nextMetrics.government_tax - lastMetrics.government_tax) / 100.0;
       }
 
+      // Penalty 1: SKIP 行为惩罚 — 鼓励 Agent 积极建设而非空过 (仅用于 developer 角色)
+      const isSkip = (chosenAction[0] ?? 0) === 0;
+      if (isSkip && activePlayer === PlayerType.DEVELOPER) {
+        reward -= 0.05;
+      }
+
       const nextUnitsFinished = nextEpisodeState.units.every(u => u.type !== 0);
       const nextTimerFinished = (nextEpisodeState.metadata?.timer ?? 0) >= maxSteps;
       const done = nextUnitsFinished || nextTimerFinished;
+
+      // Penalty 2: 终局惩罚 — 若因超时结束且仍有空格，按空格比例惩罚
+      if (done && nextTimerFinished && !nextUnitsFinished) {
+        const totalUnits = nextEpisodeState.units.length;
+        const emptyUnits = nextEpisodeState.units.filter(u => u.type === 0).length;
+        const emptyRatio = totalUnits > 0 ? emptyUnits / totalUnits : 0;
+        reward -= 0.5 * emptyRatio;
+      }
 
       // Record step transition
       const transition: Transition = {
@@ -339,14 +428,14 @@ export async function trainRL(
         mask
       };
 
-      if (activePlayer === 1) {
+      if (activePlayer === PlayerType.DEVELOPER) {
         developerBuffer.push(transition);
       } else {
         governmentBuffer.push(transition);
       }
 
       episodeState = nextEpisodeState;
-      finalStateFeatures = encodeGraphState(episodeState);
+      finalStateFeatures = encodeGraphState(episodeState, neighborMap);
       finalDone = done;
       stepCount++;
     }
@@ -596,12 +685,16 @@ export function getRLActionRecommendation(
   }
 
   const activePlayer = graph.metadata.player_order[0];
-  const model = activePlayer === 1 ? developerRLModel : governmentRLModel;
+  if (activePlayer !== PlayerType.DEVELOPER && activePlayer !== PlayerType.GOVERNMENT) {
+    throw new TypeError(`Invalid PlayerType value: ${activePlayer}`);
+  }
+  const model = activePlayer === PlayerType.DEVELOPER ? developerRLModel : governmentRLModel;
   if (!model) {
     return null;
   }
 
-  const stateFeatures = encodeGraphState(graph);
+  const neighborMap = buildNeighborMap(graph.blocks ?? []);
+  const stateFeatures = encodeGraphState(graph, neighborMap);
   const logits = tf.tidy(() => {
     const xs = tf.tensor2d([stateFeatures]);
     const ys = model.predict(xs) as tf.Tensor;

@@ -11,7 +11,6 @@ interface Viewport3DProps {
   modelName: string;
   gridName: string;
   topologyData: TopologyData | null;
-  isForceWhite: boolean;
   standardView: 'top' | 'front' | 'left' | null;
   onStandardViewProcessed: () => void;
   onUnitHover: (unit: UrbanUnit | null, x?: number, y?: number) => void;
@@ -25,7 +24,6 @@ export default function Viewport3D({
   modelName,
   gridName,
   topologyData,
-  isForceWhite,
   standardView,
   onStandardViewProcessed,
   onUnitHover,
@@ -129,14 +127,7 @@ export default function Viewport3D({
     })
   );
 
-  const whiteMaterialRef = useRef(
-    new THREE.MeshStandardMaterial({
-      color: 0xdddddd,
-      roughness: 0.7,
-      metalness: 0.15,
-      transparent: false
-    })
-  );
+
 
   const outlineMaterialRef = useRef(
     new THREE.LineBasicMaterial({
@@ -183,7 +174,7 @@ export default function Viewport3D({
     sceneRef.current = scene;
 
     // 2. Initialize Camera
-    const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 3000);
+    const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 10000);
     camera.position.set(15, -20, 15);
     camera.up.set(0, 0, 1); // Z-up coordinate system
     cameraRef.current = camera;
@@ -254,7 +245,7 @@ export default function Viewport3D({
     controls.dampingFactor = 0.05;
     controls.maxPolarAngle = Math.PI / 2 + 0.15;
     controls.minDistance = 2;
-    controls.maxDistance = 1500;
+    controls.maxDistance = 5000;
     controlsRef.current = controls;
 
     const clearHoverState = () => {
@@ -395,7 +386,6 @@ export default function Viewport3D({
       greenMaterialRef.current.dispose();
       emptyMaterialRef.current.dispose();
       hoverMaterialRef.current.dispose();
-      whiteMaterialRef.current.dispose();
       outlineMaterialRef.current.dispose();
       sphereMaterialRef.current.dispose();
 
@@ -550,25 +540,6 @@ export default function Viewport3D({
     });
 
     backgroundGroup.add(model);
-    applyForceWhite(isForceWhite);
-  };
-
-  const applyForceWhite = (force: boolean) => {
-    const backgroundGroup = backgroundGroupRef.current;
-    if (!backgroundGroup || backgroundGroup.children.length === 0) return;
-    const model = backgroundGroup.children[0];
-    const whiteMaterial = whiteMaterialRef.current;
-
-    model.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh;
-        if (force) {
-          mesh.material = whiteMaterial;
-        } else {
-          mesh.material = mesh.userData.isOriginallyWhite ? whiteMaterial : mesh.userData.originalMaterial;
-        }
-      }
-    });
   };
 
   // Setup / Clear topology grid
@@ -862,10 +833,7 @@ export default function Viewport3D({
     }
   }, [topologyData, gridName]);
 
-  // Watch for isForceWhite toggles
-  useEffect(() => {
-    applyForceWhite(isForceWhite);
-  }, [isForceWhite]);
+
 
   // Watch for standardView triggers
   useEffect(() => {

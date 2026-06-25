@@ -9,12 +9,10 @@ interface LeftBarProps {
     developer_profit: number;
     government_tax: number;
   };
-  isForceWhite: boolean;
   onModelUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onModelClear: () => void;
   onJsonUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onJsonClear: () => void;
-  onToggleForceWhite: () => void;
   hasTopologyData: boolean;
   isModelLoading?: boolean;
   isMapLoading?: boolean;
@@ -86,12 +84,10 @@ export default function LeftBar({
   gridName,
   isLoading,
   macroStats,
-  isForceWhite,
   onModelUpload,
   onModelClear,
   onJsonUpload,
   onJsonClear,
-  onToggleForceWhite,
   hasTopologyData,
   isModelLoading = false,
   isMapLoading = false,
@@ -204,16 +200,6 @@ export default function LeftBar({
                   {gameStarted ? 'Locked' : 'Clear Model'}
                 </span>
                 <span className="truncate w-full font-bold px-1" title={modelName}>{modelName}</span>
-                {/* Force White model switch in active mode */}
-                <div className="mt-1 flex items-center justify-center gap-1 group-hover:hidden" onClick={(e) => e.stopPropagation()}>
-                  <span className="text-[7px] text-zinc-500">white:</span>
-                  <button 
-                    onClick={onToggleForceWhite}
-                    className={`relative inline-flex h-2.5 w-5 flex-shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 focus:outline-none ${isForceWhite ? 'bg-pink-500' : 'bg-zinc-300 dark:bg-zinc-700'}`}
-                  >
-                    <span className={`inline-block h-1.5 w-1.5 transform rounded-full bg-white shadow transition duration-200 ${isForceWhite ? 'translate-x-2.5' : 'translate-x-0'}`} />
-                  </button>
-                </div>
               </div>
             )}
 

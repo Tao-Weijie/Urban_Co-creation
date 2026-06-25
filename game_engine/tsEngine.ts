@@ -488,7 +488,7 @@ class TSEngine {
         };
 
         return {
-            units: updatedData.units.map((u: any) => ({ id: u.id, type: u.type, height: u.height })),
+            units: updatedData.units.map((u: any) => ({ id: u.id, parentid: u.parentid, type: u.type, height: u.height, value: u.value ?? 0 })),
             metadata
         };
     }
@@ -531,7 +531,7 @@ class TSEngine {
         };
 
         return {
-            units: updatedData.units.map((u: any) => ({ id: u.id, type: u.type, height: u.height })),
+            units: updatedData.units.map((u: any) => ({ id: u.id, parentid: u.parentid, type: u.type, height: u.height, value: u.value ?? 0 })),
             metadata
         };
     }

@@ -53,7 +53,6 @@ export default function Home() {
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [gridName, setGridName] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isForceWhite, setIsForceWhite] = useState<boolean>(false);
   const [isModelLoading, setIsModelLoading] = useState<boolean>(false);
   const [isMapLoading, setIsMapLoading] = useState<boolean>(false);
 
@@ -788,7 +787,6 @@ export default function Home() {
         modelName={modelName}
         gridName={gridName}
         topologyData={displayedTopologyData}
-        isForceWhite={isForceWhite}
         standardView={standardView}
         onStandardViewProcessed={() => setStandardView(null)}
         onUnitHover={handleUnitHover}
@@ -817,12 +815,10 @@ export default function Home() {
         isModelLoading={isModelLoading}
         isMapLoading={isMapLoading}
         macroStats={displayedMacroStats}
-        isForceWhite={isForceWhite}
         onModelUpload={handleModelUpload}
         onModelClear={clearBackgroundModel}
         onJsonUpload={handleJsonUpload}
         onJsonClear={clearTopologyGrid}
-        onToggleForceWhite={() => setIsForceWhite(!isForceWhite)}
         hasTopologyData={topologyData !== null}
 
         // Game Mode props
