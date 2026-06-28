@@ -1,17 +1,34 @@
 export interface Block {
-  id: number;
-  neighbor: number[];
-  boundary: number[][]; // Representing points as [x, y, z]
+  topology: {
+    id: number;
+    neighbor: number[];
+  };
+  geometry: {
+    boundary: number[][]; // Representing points as [x, y, z]
+    hole: number[][][];
+  };
+  state: {
+    value?: number; // Land value as a block attribute
+  };
 }
 
 export interface UrbanUnit {
-  id: number;
-  parentid: number;
-  type: number; // 0: empty, 1: residential, 2: green
-  value: number;
-  population: number;
-  boundary: number[][]; // Representing points as [x, y, z]
-  height: number; // Number of floors
+  topology: {
+    id: number;
+    blockid: number;
+    buildingid: number;
+    idinbuilding: number;
+  };
+  geometry: {
+    boundary: number[][]; // Representing points as [x, y, z]
+    hole?: number[][][];  // Representing holes as array of point arrays
+    height: number;       // Absolute height
+  };
+  state: {
+    type: number;         // 0: empty, 1: residential, 2: green
+    value?: number;       // Optional land value
+    population: number;
+  };
 }
 
 export interface TopologyMetadata {

@@ -32,27 +32,27 @@ export default function BottomBar({
   onFpsChange
 }: BottomBarProps) {
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center rounded-2xl border border-black/10 bg-white/80 dark:border-white/10 dark:bg-black/70 px-5 h-[54px] shadow-2xl backdrop-blur-md transition-all duration-500 hover:border-black/20 dark:hover:border-white/20 text-zinc-800 dark:text-zinc-200">
+    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center app-bar p-4 duration-500">
       
       {/* View Selectors & Theme Toggle (Always Visible Left Side) */}
       <div className="flex items-center gap-2 flex-shrink-0">
         <button
           onClick={() => onSetView('top')}
-          className="flex-shrink-0 w-[68px] text-center rounded-xl bg-black/5 border border-black/5 dark:bg-white/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/12 py-2 text-[11px] font-bold uppercase tracking-wider transition-all duration-150 active:scale-95 cursor-pointer"
+          className="flex-shrink-0 w-[68px] text-[11px] app-btn-secondary"
         >
           Top
         </button>
         <div className="h-4 w-[1px] bg-black/10 dark:bg-white/10 flex-shrink-0" />
         <button
           onClick={() => onSetView('front')}
-          className="flex-shrink-0 w-[68px] text-center rounded-xl bg-black/5 border border-black/5 dark:bg-white/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/12 py-2 text-[11px] font-bold uppercase tracking-wider transition-all duration-150 active:scale-95 cursor-pointer"
+          className="flex-shrink-0 w-[68px] text-[11px] app-btn-secondary"
         >
           Front
         </button>
         <div className="h-4 w-[1px] bg-black/10 dark:bg-white/10 flex-shrink-0" />
         <button
           onClick={() => onSetView('left')}
-          className="flex-shrink-0 w-[68px] text-center rounded-xl bg-black/5 border border-black/5 dark:bg-white/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/12 py-2 text-[11px] font-bold uppercase tracking-wider transition-all duration-150 active:scale-95 cursor-pointer"
+          className="flex-shrink-0 w-[68px] text-[11px] app-btn-secondary"
         >
           Left
         </button>
@@ -87,7 +87,7 @@ export default function BottomBar({
             <button
               onClick={onTogglePlay}
               disabled={!isDraggable && gameHistoryLength <= 1}
-              className={`flex items-center justify-center w-7 h-7 rounded-xl bg-pink-500 hover:bg-pink-600 text-white transition-all shadow-md cursor-pointer ${
+              className={`flex items-center justify-center w-7 h-7 rounded-xl bg-pink-500 hover:bg-pink-600 text-white transition-all cursor-pointer ${
                 (!isDraggable && gameHistoryLength <= 1) ? 'opacity-50 cursor-not-allowed bg-zinc-400 hover:bg-zinc-400' : ''
               }`}
               title={isPlaying ? "Pause Playback" : "Start Playback"}

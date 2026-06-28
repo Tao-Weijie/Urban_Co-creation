@@ -148,7 +148,6 @@ export default function Home() {
   const [rlLossHistory, setRlLossHistory] = useState<number[]>([]);
   const [rlMetrics, setRlMetrics] = useState<RLTrainingMetrics | null>(null);
   const [isRlLoaded, setIsRlLoaded] = useState<boolean>(false);
-  const [rlBackend, setRlBackend] = useState<'cpu' | 'webgl'>('webgl');
 
   // Timeline playback states
   const [isTimelinePlaying, setIsTimelinePlaying] = useState<boolean>(false);
@@ -226,7 +225,7 @@ export default function Home() {
       return;
     }
 
-    const allOccupied = topologyData.units.every(u => u.type !== 0);
+    const allOccupied = topologyData.units.every(u => u.state.type !== 0);
     const stepLimitReached = (topologyData.metadata?.timer || 0) >= 200;
 
     if (allOccupied || stepLimitReached) {
@@ -325,9 +324,14 @@ export default function Home() {
   // Helper to strip boundary coordinates before sending to backend
   const stripBoundaries = (data: TopologyData) => {
     return {
-      blocks: data.blocks.map(({ id, neighbor }) => ({ id, neighbor })),
-      units: data.units.map(({ id, parentid, type, value, population, height }) => ({
-        id, parentid, type, value, population, height
+      blocks: data.blocks.map((b) => ({ id: b.topology.id, neighbor: b.topology.neighbor })),
+      units: data.units.map((u) => ({
+        id: u.topology.id,
+        parentid: u.topology.blockid,
+        type: u.state.type,
+        value: u.state.value,
+        population: u.state.population,
+        height: u.geometry.height
       })),
       timer: data.metadata?.timer || 0,
       metadata: data.metadata || {}
@@ -337,25 +341,40 @@ export default function Home() {
   // Helper to merge boundaries back from local data cache
   const mergeBoundaries = (response: any, localData: TopologyData): TopologyData => {
     const blocks = response.blocks ? response.blocks.map((b: any) => {
-      const localBlock = localData.blocks.find(lb => lb.id === b.id);
+      const localBlock = localData.blocks.find(lb => lb.topology.id === b.id);
       return {
-        ...b,
-        boundary: localBlock ? localBlock.boundary : []
+        topology: {
+          id: b.id,
+          neighbor: b.neighbor || []
+        },
+        geometry: {
+          boundary: localBlock ? localBlock.geometry.boundary : [],
+          hole: localBlock ? localBlock.geometry.hole : []
+        },
+        state: {
+          value: b.value
+        }
       };
     }) : localData.blocks;
 
     const units = response.units ? response.units.map((u: any) => {
-      const localUnit = localData.units.find(lu => lu.id === u.id);
+      const localUnit = localData.units.find(lu => lu.topology.id === u.topology.id);
       if (localUnit) {
         return {
           ...u,
-          boundary: localUnit.boundary
+          geometry: {
+            ...u.geometry,
+            boundary: localUnit.geometry.boundary
+          }
         };
       } else {
-        const parentBlock = localData.blocks.find(lb => lb.id === u.parentid);
+        const parentBlock = localData.blocks.find(lb => lb.topology.id === u.topology.blockid);
         return {
           ...u,
-          boundary: parentBlock ? parentBlock.boundary : []
+          geometry: {
+            ...u.geometry,
+            boundary: parentBlock ? parentBlock.geometry.boundary : []
+          }
         };
       }
     }) : localData.units;
@@ -430,24 +449,43 @@ export default function Home() {
         if (json.blocks) {
           let units = json.units || [];
           json.blocks.forEach((block: Block) => {
-            const hasUnit = units.some((u: any) => u.parentid === block.id);
+            const hasUnit = units.some((u: any) => u.topology.blockid === block.topology.id);
             if (!hasUnit) {
               units.push({
-                id: block.id,
-                parentid: block.id,
-                type: 0, // EMPTY
-                value: 0.0,
-                population: 0.0,
-                boundary: block.boundary,
-                height: 1 // default height 1
+                topology: {
+                  id: block.topology.id,
+                  blockid: block.topology.id,
+                  buildingid: 0,
+                  idinbuilding: 0
+                },
+                geometry: {
+                  boundary: block.geometry.boundary,
+                  height: 1
+                },
+                state: {
+                  type: 0, // EMPTY
+                  value: 0.0,
+                  population: 0.0
+                }
               });
             }
           });
 
           // Ensure all type 0 units have 0 value, 0 population, and default height 1 if empty
           units = units.map((u: any) => {
-            if (u.type === 0) {
-              return { ...u, value: 0.0, population: 0.0, height: u.height || 1 };
+            if (u.state.type === 0) {
+              return {
+                ...u,
+                state: {
+                  ...u.state,
+                  value: 0.0,
+                  population: 0.0
+                },
+                geometry: {
+                  ...u.geometry,
+                  height: u.geometry.height || 1
+                }
+              };
             }
             return u;
           });
@@ -585,7 +623,7 @@ export default function Home() {
 
   const handleSelectGameAction = (actionType: ActionType) => {
     if (selectedUnitForGameAction) {
-      const targetUnitId = actionType === ActionType.SKIP ? undefined : selectedUnitForGameAction.id;
+      const targetUnitId = actionType === ActionType.SKIP ? undefined : selectedUnitForGameAction.topology.id;
       handlePlayTurn(actionType, targetUnitId);
       setIsGameActionModalOpen(false);
       setSelectedUnitForGameAction(null);
@@ -666,13 +704,19 @@ export default function Home() {
     else if (editBuiltType === 'green' || editBuiltType === 'park') typeVal = 2;
 
     const updatedUnits = topologyData.units.map(u => {
-      if (u.id === selectedUnitForEdit.id) {
+      if (u.topology.id === selectedUnitForEdit.topology.id) {
         return {
           ...u,
-          type: typeVal,
-          value: isOccupied ? u.value : 0.0,
-          population: isOccupied ? u.population : 0.0,
-          height: u.height
+          state: {
+            ...u.state,
+            type: typeVal,
+            value: isOccupied ? u.state.value : 0.0,
+            population: isOccupied ? u.state.population : 0.0
+          },
+          geometry: {
+            ...u.geometry,
+            height: u.geometry.height
+          }
         };
       }
       return u;
@@ -687,8 +731,8 @@ export default function Home() {
     setIsEditModalOpen(false);
 
     // Update the hover info if the currently hovered unit was the edited one
-    if (hoveredUnitInfo && hoveredUnitInfo.id === selectedUnitForEdit.id) {
-      const updatedUnit = updatedUnits.find(u => u.id === selectedUnitForEdit.id);
+    if (hoveredUnitInfo && hoveredUnitInfo.topology.id === selectedUnitForEdit.topology.id) {
+      const updatedUnit = updatedUnits.find(u => u.topology.id === selectedUnitForEdit.topology.id);
       if (updatedUnit) {
         setHoveredUnitInfo(updatedUnit);
       }
@@ -723,8 +767,7 @@ export default function Home() {
           setRlLossHistory(prev => [...prev, metrics.avgLoss]);
           setRlMetrics(metrics);
         },
-        () => rlCancelledRef.current,
-        rlBackend
+        () => rlCancelledRef.current
       );
 
       if (!rlCancelledRef.current) {
@@ -852,8 +895,6 @@ export default function Home() {
         onSaveRL={handleSaveRL}
         onLoadRLFile={onLoadRLFile}
         onClearRL={handleClearRLModels}
-        rlBackend={rlBackend}
-        onChangeRlBackend={setRlBackend}
       />
 
       {/* Hover Information Panel (Follows cursor) */}
@@ -883,9 +924,9 @@ export default function Home() {
         unit={selectedUnitForEdit}
         currentBuiltType={
           selectedUnitForEdit
-            ? (selectedUnitForEdit.type === 1
+            ? (selectedUnitForEdit.state.type === 1
               ? 'residential'
-              : (selectedUnitForEdit.type === 2
+              : (selectedUnitForEdit.state.type === 2
                 ? 'green'
                 : 'empty'))
             : 'empty'
@@ -899,7 +940,7 @@ export default function Home() {
         const activeRoleVal = displayedTopologyData?.metadata?.next_player ?? displayedTurnOrder[displayedActiveRoleIndex] ?? 1;
         const allowedBehavior = displayedTopologyData?.metadata?.valid_action ?? [];
         const allowedBuildings = displayedTopologyData?.metadata?.valid_type ?? [];
-        const roleName = rolesConfig[String(activeRoleVal)]?.name ?? (activeRoleVal === 1 ? "Developer" : "Government");
+        const roleName = rolesConfig[String(activeRoleVal)]?.name ?? `Role ${activeRoleVal}`;
         return (
           <GameActionModal
             isOpen={isGameActionModalOpen}

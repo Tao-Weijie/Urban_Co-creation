@@ -15,7 +15,7 @@ export default function HoverPanel({ hoveredUnitInfo, hoverPosition, topologyDat
   }
 
   // Find parent block to show block info if needed
-  const block = topologyData.blocks.find(b => b.id === unit.parentid);
+  const block = topologyData.blocks.find(b => b.topology.id === unit.topology.blockid);
 
   // Prevent overflow outside of viewport boundaries
   let left = hoverPosition.x + 15;
@@ -40,14 +40,14 @@ export default function HoverPanel({ hoveredUnitInfo, hoverPosition, topologyDat
   return (
     <div 
       style={{ left, top }}
-      className="fixed pointer-events-none z-50 w-72 rounded-2xl border border-black/10 bg-white/90 dark:border-white/10 dark:bg-black/85 p-4 shadow-2xl backdrop-blur-md text-zinc-800 dark:text-zinc-200"
+      className="fixed pointer-events-none z-50 w-72 app-bar p-4"
     >
       <div className="space-y-3 font-mono text-xs">
         {/* Tooltip Header */}
         <div className="flex justify-between items-center pb-2 border-b border-black/5 dark:border-white/5">
           <span className="text-zinc-500 dark:text-zinc-400">Hovered Unit:</span>
           <span className="font-semibold text-pink-500 truncate max-w-[130px]">
-            Unit {unit.id}
+            Unit {unit.topology.id}
           </span>
         </div>
         
@@ -55,29 +55,37 @@ export default function HoverPanel({ hoveredUnitInfo, hoverPosition, topologyDat
         <div className="space-y-2 text-zinc-600 dark:text-zinc-300">
           <div className="flex justify-between">
             <span>id:</span>
-            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.id}</span>
+            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.topology.id}</span>
           </div>
           <div className="flex justify-between">
-            <span>parent id:</span>
-            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.parentid}</span>
+            <span>block id:</span>
+            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.topology.blockid}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>building id:</span>
+            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.topology.buildingid}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>id in building:</span>
+            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.topology.idinbuilding}</span>
           </div>
           <div className="flex justify-between">
             <span>type:</span>
             <span className="text-zinc-950 dark:text-zinc-100 font-semibold">
-              {unit.type === 1 ? 'residential' : (unit.type === 2 ? 'green' : 'empty')}
+              {unit.state.type === 1 ? 'residential' : (unit.state.type === 2 ? 'green' : 'empty')}
             </span>
           </div>
           <div className="flex justify-between">
             <span>height:</span>
-            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.height}</span>
+            <span className="text-zinc-950 dark:text-zinc-100 font-semibold">{unit.geometry.height}</span>
           </div>
           <div className="flex justify-between">
-            <span>value:</span>
-            <span className="text-pink-500 dark:text-pink-400 font-semibold">{unit.value}</span>
+            <span>block value:</span>
+            <span className="text-pink-500 dark:text-pink-400 font-semibold">{block?.state?.value ?? 0}</span>
           </div>
           <div className="flex justify-between">
             <span>population:</span>
-            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{unit.population ?? 0}</span>
+            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{unit.state.population ?? 0}</span>
           </div>
         </div>
         

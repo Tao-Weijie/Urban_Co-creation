@@ -13,14 +13,14 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-sora);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sora), sans-serif;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
@@ -33,4 +33,40 @@ input::-webkit-inner-spin-button {
 
 input[type=number] {
   -moz-appearance: textfield;
+}
+
+/* Custom UI Layout Classes */
+.app-bar {
+  @apply border border-black/10 bg-white/80 dark:border-white/10 dark:bg-black/70 rounded-[36px] backdrop-blur-md transition-all text-zinc-800 dark:text-zinc-200 hover:border-black/20 dark:hover:border-white/20;
+}
+
+.app-btn-primary {
+  background-color: rgb(236, 0, 140);
+  @apply rounded-xl font-bold transition-all text-center cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] select-none text-white hover:opacity-95;
+}
+
+.app-btn-secondary {
+  @apply rounded-xl bg-black/5 border border-black/5 dark:bg-white/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/12 text-zinc-700 dark:text-zinc-300 transition-all cursor-pointer active:scale-95 select-none;
+}
+
+.app-btn-outline {
+  @apply rounded-xl font-bold border transition-all text-center cursor-pointer select-none active:scale-[0.98];
+}
+
+.app-title {
+  font-family: var(--font-sora), sans-serif;
+  color: rgb(236, 0, 140) !important;
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: capitalize;
+  letter-spacing: normal;
+}
+
+.app-subtitle {
+  font-family: var(--font-sora), sans-serif;
+  color: rgb(236, 0, 140) !important;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
 }

@@ -50,9 +50,9 @@ export function encodeGraphState(
   // Build block → units index for neighbour lookups
   const blockUnits = new Map<number, any[]>();
   for (const u of graph.units) {
-    const pid = Number(u.parentid ?? -1);
-    if (!blockUnits.has(pid)) blockUnits.set(pid, []);
-    blockUnits.get(pid)!.push(u);
+    const bid = Number(u.blockid ?? -1);
+    if (!blockUnits.has(bid)) blockUnits.set(bid, []);
+    blockUnits.get(bid)!.push(u);
   }
 
   // Evaluation constants (mirror of tsEngine evaluate())
@@ -60,9 +60,10 @@ export function encodeGraphState(
 
   const features: number[] = [];
   for (const u of graph.units) {
-    const v   = u.value  ?? 30;
+    const bid = Number(u.blockid ?? -1);
+    const blockObj = graph.blocks.find(b => b.id === bid);
+    const v = blockObj?.value ?? u.value ?? 30;
     const h   = u.height ?? 1;
-    const pid = Number(u.parentid ?? -1);
 
     features.push(u.type === 0 ? 1 : 0);       // is_empty
     features.push(u.type === 1 ? 1 : 0);       // is_residential
@@ -84,8 +85,8 @@ export function encodeGraphState(
     // Proxy: count same-block + neighbour residential units × base tax rate.
     let gov_gain = 0;
     if (neighborMap) {
-      const neighborIds = neighborMap.get(pid) ?? [];
-      const sameRes = (blockUnits.get(pid) ?? []).filter((bu: any) => bu.type === 1).length;
+      const neighborIds = neighborMap.get(bid) ?? [];
+      const sameRes = (blockUnits.get(bid) ?? []).filter((bu: any) => bu.type === 1).length;
       let nbRes = 0;
       for (const nid of neighborIds) {
         nbRes += (blockUnits.get(nid) ?? []).filter((nu: any) => nu.type === 1).length;
@@ -182,9 +183,6 @@ export async function clearAllCachedModels(): Promise<void> {
   }
 }
 
-/**
- * Reconstructs valid actions list for a role in JS.
- */
 function getValidActions(state: TopologyData): (number | null)[][] {
   const validActions: (number | null)[][] = [];
   const metadata = state.metadata || {};
@@ -201,8 +199,20 @@ function getValidActions(state: TopologyData): (number | null)[][] {
 
   if (hasPlace || hasReplace) {
     const units = state.units || [];
+    const buildingUnits = new Map<number, any[]>();
+    for (const u of units) {
+      if (!buildingUnits.has(u.buildingid)) {
+        buildingUnits.set(u.buildingid, []);
+      }
+      buildingUnits.get(u.buildingid)!.push(u);
+    }
+
     units.forEach((unit: any) => {
-      if (hasPlace && unit.type === 0) {
+      const bUnits = buildingUnits.get(unit.buildingid) || [];
+      const lowerUnits = bUnits.filter(ou => ou.idinbuilding < unit.idinbuilding);
+      const isBottomMostEmpty = lowerUnits.every(ou => ou.type !== 0);
+
+      if (hasPlace && unit.type === 0 && isBottomMostEmpty) {
         validActions.push([1, unit.id]);
       } else if (hasReplace && unit.type !== 0) {
         validActions.push([2, unit.id]);
@@ -245,16 +255,15 @@ export async function trainRL(
   episodes: number,
   learningRate: number,
   onEpisodeEnd: (metrics: RLTrainingMetrics) => void,
-  isCancelled: () => boolean,
-  backend: 'cpu' | 'webgl' = 'webgl'
+  isCancelled: () => boolean
 ): Promise<void> {
-  // Set selected backend in TensorFlow.js
-  if (tf.getBackend() !== backend) {
+  // Force WebGL backend in TensorFlow.js for GPU acceleration
+  if (tf.getBackend() !== 'webgl') {
     try {
-      await tf.setBackend(backend);
-      console.log(`[MAPPO] Switched backend to: ${backend}`);
+      await tf.setBackend('webgl');
+      console.log(`[MAPPO] Switched backend to: webgl`);
     } catch (e) {
-      console.warn(`[MAPPO] Failed to switch to backend ${backend}:`, e);
+      console.warn(`[MAPPO] Failed to switch to backend webgl:`, e);
     }
   }
   const N = graph.units.length;
@@ -281,8 +290,17 @@ export async function trainRL(
 
   // Clean starting graph JSON for stateless payloads
   const startingGraphPayload = {
-    blocks: graph.blocks.map(b => ({ id: b.id, neighbor: b.neighbor })),
-    units: graph.units.map(u => ({ id: u.id, parentid: u.parentid, type: u.type, height: u.height, value: u.value, population: u.population })),
+    blocks: graph.blocks.map(b => ({ id: b.id, neighbor: b.neighbor, value: b.value })),
+    units: graph.units.map(u => ({
+      id: u.id,
+      blockid: u.blockid,
+      buildingid: u.buildingid,
+      idinbuilding: u.idinbuilding,
+      type: u.type,
+      height: u.height,
+      value: u.value,
+      population: u.population
+    })),
     metadata: { timer: 0, game_started: false }
   };
 

@@ -46,8 +46,8 @@ export default function GameActionModal({
 }: GameActionModalProps) {
   if (!isOpen || !unit) return null;
 
-  const isPlaceAllowed = (allowedBehavior.includes(ActionType.PLACE) || allowedBehavior.includes('place')) && unit.type === 0;
-  const isReplaceAllowed = (allowedBehavior.includes(ActionType.REPLACE) || allowedBehavior.includes('replace')) && unit.type !== 0;
+  const isPlaceAllowed = (allowedBehavior.includes(ActionType.PLACE) || allowedBehavior.includes('place')) && unit.state.type === 0;
+  const isReplaceAllowed = (allowedBehavior.includes(ActionType.REPLACE) || allowedBehavior.includes('replace')) && unit.state.type !== 0;
 
   const targetBuildingType = allowedBuildings.length > 0 ? allowedBuildings[0] : 0;
   const buildingName = getBuildingTypeName(targetBuildingType);
@@ -55,16 +55,16 @@ export default function GameActionModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-96 rounded-3xl border border-black/10 bg-white dark:border-white/10 dark:bg-zinc-950 p-6 shadow-2xl space-y-5 text-zinc-800 dark:text-zinc-200 animate-in fade-in zoom-in-95 duration-150">
-        
+
         {/* Modal Header */}
         <div className="flex justify-between items-center pb-2 border-b border-black/5 dark:border-white/5">
           <div>
-            <span className="text-[10px] font-bold text-pink-500 uppercase tracking-wider block">Game Turn Decision</span>
+            <span className="app-title block">Game Turn Decision</span>
             <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
               Role: {roleName}
             </h3>
           </div>
-          <button 
+          <button
             onClick={onClose}
             className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 font-sans text-lg cursor-pointer"
           >
@@ -77,11 +77,11 @@ export default function GameActionModal({
           <div className="bg-black/5 dark:bg-white/5 p-3 rounded-xl border border-black/5 dark:border-white/5 space-y-1">
             <div className="flex justify-between">
               <span className="text-zinc-500 dark:text-zinc-400">Target Unit ID:</span>
-              <span className="font-mono font-bold">{unit.id}</span>
+              <span className="font-mono font-bold">{unit.topology.id}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-zinc-500 dark:text-zinc-400">Current Status:</span>
-              <span className="font-semibold text-zinc-700 dark:text-zinc-300">{getUnitTypeName(unit.type)}</span>
+              <span className="font-semibold text-zinc-700 dark:text-zinc-300">{getUnitTypeName(unit.state.type)}</span>
             </div>
           </div>
 
@@ -106,13 +106,13 @@ export default function GameActionModal({
               onClick={() => onSelectAction(ActionType.REPLACE)}
               className="w-full py-3 text-xs font-bold text-white bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-95 shadow-md shadow-orange-500/10 rounded-xl transition duration-150 cursor-pointer flex items-center justify-center gap-1.5"
             >
-              🔄 Replace with {buildingName}
+              Replace with {buildingName}
             </button>
           )}
 
           {!isPlaceAllowed && !isReplaceAllowed && (
             <div className="text-center py-3 px-4 rounded-xl border border-dashed border-red-500/20 bg-red-500/5 text-red-500 font-medium text-xs">
-              ⚠️ No valid actions can be performed on this tile by your role. (Current tile must be empty to place, or occupied to replace).
+              No valid actions can be performed on this tile by your role. (Current tile must be empty to place, or occupied to replace).
             </div>
           )}
 
@@ -120,7 +120,7 @@ export default function GameActionModal({
             onClick={() => onSelectAction(ActionType.SKIP)}
             className="w-full py-2.5 text-xs font-bold text-zinc-700 bg-zinc-100 hover:bg-zinc-200 dark:text-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 rounded-xl transition duration-150 cursor-pointer flex items-center justify-center gap-1.5"
           >
-            ⏭️ Skip Turn
+            Skip Turn
           </button>
 
           <button

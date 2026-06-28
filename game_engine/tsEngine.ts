@@ -38,41 +38,110 @@ function validateActionType(val: any): ActionType {
 }
 
 export class UrbanUnit {
-    id: number;
-    parentid: number;
-    type: UnitType;
-    height: number;
-    value: number;
-    population: number;
+    topology: {
+        id: number;
+        blockid: number;
+        buildingid: number;
+        idinbuilding: number;
+    };
+    geometry: {
+        boundary: number[][];
+        hole?: number[][][];
+        height: number;
+    };
+    state: {
+        type: UnitType;
+        value?: number;
+        population: number;
+    };
 
-    constructor(id: number, parentid: number, type: UnitType, height: number, value: number, population: number) {
-        this.id = id;
-        this.parentid = parentid;
-        this.type = type;
-        this.height = height;
-        this.value = value;
-        this.population = population;
+    constructor(
+        id: number,
+        blockid: number,
+        buildingid: number,
+        idinbuilding: number,
+        type: UnitType,
+        height: number,
+        value: number | undefined,
+        population: number,
+        boundary: number[][],
+        hole?: number[][][]
+    ) {
+        this.topology = { id, blockid, buildingid, idinbuilding };
+        this.geometry = { boundary, hole, height };
+        this.state = { type, value, population };
     }
 
+    // Getters and Setters for backward compatibility
+    get id() { return this.topology.id; }
+    get blockid() { return this.topology.blockid; }
+    get buildingid() { return this.topology.buildingid; }
+    get idinbuilding() { return this.topology.idinbuilding; }
+    get type() { return this.state.type; }
+    set type(val: UnitType) { this.state.type = val; }
+    get height() { return this.geometry.height; }
+    set height(val: number) { this.geometry.height = val; }
+    get value() { return this.state.value; }
+    set value(val: number | undefined) { this.state.value = val; }
+    get population() { return this.state.population; }
+    set population(val: number) { this.state.population = val; }
+    get boundary() { return this.geometry.boundary; }
+    get holes() { return this.geometry.hole; }
+
     static fromJson(data: any): UrbanUnit {
+        const topology = data.topology || {
+            id: data.id,
+            blockid: data.blockid ?? data.parentid ?? 0,
+            buildingid: data.buildingid ?? 0,
+            idinbuilding: data.idinbuilding ?? 0
+        };
+        const geometry = data.geometry || {
+            boundary: data.boundary || [],
+            hole: data.hole ?? data.holes,
+            height: data.height !== undefined ? (data.geometry ? data.height : data.height * 4.0) : 4.0
+        };
+        const rawType = data.state?.type !== undefined ? data.state.type : (data.topology?.type ?? data.type ?? 0);
+        const state = data.state || {
+            type: rawType,
+            value: data.value,
+            population: data.population ?? 0.0
+        };
+        if (state.type === undefined || state.type === null) {
+            state.type = 0;
+        }
+
         return new UrbanUnit(
-            data.id,
-            data.parentid,
-            validateUnitType(data.type),
-            data.height ?? 1,
-            data.value ?? 0.0,
-            data.population ?? 0.0
+            topology.id,
+            topology.blockid,
+            topology.buildingid,
+            topology.idinbuilding,
+            validateUnitType(state.type),
+            geometry.height,
+            state.value,
+            state.population ?? 0.0,
+            geometry.boundary,
+            geometry.hole
         );
     }
 
     toJson(): any {
         return {
-            id: this.id,
-            parentid: this.parentid,
-            type: Number(this.type),
-            height: this.height,
-            value: this.value,
-            population: this.population
+            topology: {
+                id: this.topology.id,
+                blockid: this.topology.blockid,
+                buildingid: this.topology.buildingid,
+                idinbuilding: this.topology.idinbuilding
+            },
+            geometry: {
+                boundary: this.geometry.boundary,
+                hole: this.geometry.hole,
+                height: this.geometry.height
+            },
+            state: {
+                type: Number(this.state.type),
+                value: this.state.value,
+                population: this.state.population
+            }
         };
     }
 }
@@ -84,6 +153,7 @@ export class UrbanGraph {
     timer: number;
     player_order: PlayerType[];
     game_started: boolean;
+    blockValues: Map<number, number>;
 
     constructor(blocks: number[], neighbor: number[][], units: UrbanUnit[], player_order: PlayerType[], game_started: boolean, timer: number = 0) {
         this.blocks = blocks;
@@ -92,6 +162,7 @@ export class UrbanGraph {
         this.timer = timer;
         this.player_order = player_order;
         this.game_started = game_started;
+        this.blockValues = new Map<number, number>();
     }
 
     getNeighbors(blockId: number): number[] {
@@ -113,7 +184,11 @@ export class UrbanGraph {
         const rawOrder = metadata.player_order || [];
         const player_order = rawOrder.map((r: any) => validatePlayerType(r));
 
-        return new UrbanGraph(blocks, neighbor, units, player_order, game_started, timer);
+        const graph = new UrbanGraph(blocks, neighbor, units, player_order, game_started, timer);
+        blocksData.forEach((b: any) => {
+            graph.blockValues.set(Number(b.id), b.value ?? 30.0);
+        });
+        return graph;
     }
 
     toJson(): any {
@@ -134,6 +209,11 @@ export class UrbanGraph {
         }
 
         return {
+            blocks: this.blocks.map(id => ({
+                id,
+                neighbor: this.getNeighbors(id),
+                value: this.blockValues.get(id) ?? 30.0
+            })),
             units: this.units.map(u => u.toJson()),
             metadata
         };
@@ -246,8 +326,21 @@ export class GameEngine {
         const has_replace = allowed_actions.includes(ActionType.REPLACE);
 
         if (has_place || has_replace) {
+            // Group units by building so we can check if they are valid for placement
+            const buildingUnits = new Map<number, UrbanUnit[]>();
+            for (const u of graph.units) {
+                if (!buildingUnits.has(u.buildingid)) {
+                    buildingUnits.set(u.buildingid, []);
+                }
+                buildingUnits.get(u.buildingid)!.push(u);
+            }
+
             for (const unit of graph.units) {
-                if (has_place && unit.type === UnitType.EMPTY) {
+                const bUnits = buildingUnits.get(unit.buildingid) || [];
+                const lowerUnits = bUnits.filter(ou => ou.idinbuilding < unit.idinbuilding);
+                const isBottomMostEmpty = lowerUnits.every(ou => ou.type !== UnitType.EMPTY);
+
+                if (has_place && unit.type === UnitType.EMPTY && isBottomMostEmpty) {
                     valid_actions.push([Number(ActionType.PLACE), unit.id]);
                 } else if (has_replace && unit.type !== UnitType.EMPTY) {
                     valid_actions.push([Number(ActionType.REPLACE), unit.id]);
@@ -261,37 +354,34 @@ export class GameEngine {
     static evaluate(graph: UrbanGraph): { government_tax: number, developer_profit: number, total_population: number } {
         const block_to_units: { [key: string]: UrbanUnit[] } = {};
         for (const u of graph.units) {
-            const pid = String(u.parentid);
-            if (!block_to_units[pid]) {
-                block_to_units[pid] = [];
+            const bid = String(u.blockid);
+            if (!block_to_units[bid]) {
+                block_to_units[bid] = [];
             }
-            block_to_units[pid].push(u);
+            block_to_units[bid].push(u);
         }
 
-        for (const u of graph.units) {
-            const pid = String(u.parentid);
-            const same_block_units = block_to_units[pid] || [];
+        for (const blockId of graph.blocks) {
+            const bid = String(blockId);
+            const same_block_units = block_to_units[bid] || [];
 
             const total_green_units = same_block_units.filter(ou => ou.type === UnitType.GREEN).length;
             const total_residential_units = same_block_units.filter(ou => ou.type === UnitType.RESIDENTIAL).length;
 
             let neighbor_green_units = 0;
             let neighbor_res_units = 0;
-            const neighbors = graph.getNeighbors(u.parentid);
+            const neighbors = graph.getNeighbors(blockId);
             for (const neighbor_id of neighbors) {
                 const neighbor_units = block_to_units[String(neighbor_id)] || [];
                 neighbor_green_units += neighbor_units.filter(nu => nu.type === UnitType.GREEN).length;
                 neighbor_res_units += neighbor_units.filter(nu => nu.type === UnitType.RESIDENTIAL).length;
             }
 
-            const u_count_to_subtract = u.type === UnitType.RESIDENTIAL ? 1 : 0;
-
             const value_green = 40.0 * Math.sqrt(total_green_units) + 20.0 * Math.sqrt(neighbor_green_units);
+            const value_penalty = 6.0 * total_residential_units + 3.0 * neighbor_res_units;
 
-            const r_same = total_residential_units - u_count_to_subtract;
-            const value_penalty = 6.0 * r_same + 3.0 * neighbor_res_units;
-
-            u.value = Math.max(15.0, Math.min(100.0, 30.0 + value_green - value_penalty));
+            const blockVal = Math.max(15.0, Math.min(100.0, 30.0 + value_green - value_penalty));
+            graph.blockValues.set(blockId, blockVal);
         }
 
         const mu = 60.0;
@@ -306,7 +396,7 @@ export class GameEngine {
 
         for (const u of graph.units) {
             if (u.type === UnitType.RESIDENTIAL) {
-                const v = u.value;
+                const v = graph.blockValues.get(u.blockid) ?? 30.0;
                 const pop_per_floor = P_max * Math.exp(-Math.pow(v - mu, 2) / (2 * Math.pow(sigma, 2)));
                 const rounded_pop = Math.round(pop_per_floor) * u.height;
                 u.population = rounded_pop;
@@ -372,6 +462,7 @@ class TSEngine {
         };
 
         return Promise.resolve({
+            blocks: updatedData.blocks,
             units: updatedData.units,
             metadata
         });
@@ -402,6 +493,7 @@ class TSEngine {
         };
 
         return Promise.resolve({
+            blocks: updatedData.blocks,
             units: updatedData.units,
             metadata
         });
@@ -449,6 +541,7 @@ class TSEngine {
         };
 
         return Promise.resolve({
+            blocks: updatedData.blocks,
             units: updatedData.units,
             metadata
         });
@@ -488,7 +581,16 @@ class TSEngine {
         };
 
         return {
-            units: updatedData.units.map((u: any) => ({ id: u.id, parentid: u.parentid, type: u.type, height: u.height, value: u.value ?? 0 })),
+            blocks: updatedData.blocks,
+            units: updatedData.units.map((u: any) => ({
+                id: u.id,
+                blockid: u.blockid,
+                buildingid: u.buildingid,
+                idinbuilding: u.idinbuilding,
+                type: u.type,
+                height: u.height,
+                value: u.value ?? 0
+            })),
             metadata
         };
     }
@@ -531,7 +633,16 @@ class TSEngine {
         };
 
         return {
-            units: updatedData.units.map((u: any) => ({ id: u.id, parentid: u.parentid, type: u.type, height: u.height, value: u.value ?? 0 })),
+            blocks: updatedData.blocks,
+            units: updatedData.units.map((u: any) => ({
+                id: u.id,
+                blockid: u.blockid,
+                buildingid: u.buildingid,
+                idinbuilding: u.idinbuilding,
+                type: u.type,
+                height: u.height,
+                value: u.value ?? 0
+            })),
             metadata
         };
     }

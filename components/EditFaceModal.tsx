@@ -32,7 +32,7 @@ export default function EditFaceModal({
         {/* Modal Header */}
         <div className="flex justify-between items-center pb-2 border-b border-black/5 dark:border-white/5">
           <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-100">
-            Edit Unit Properties (ID: {unit.id})
+            Edit Unit Properties (ID: {unit.topology.id})
           </h3>
           <button 
             onClick={onClose}

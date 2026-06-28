@@ -571,16 +571,17 @@ export default function Viewport3D({
 
   const updateTopologyMaterials = (data: TopologyData) => {
     data.units.forEach((unit) => {
-      const mesh = unitMeshesRef.current.get(unit.id);
+      const unitId = unit.topology.id;
+      const mesh = unitMeshesRef.current.get(unitId);
       if (mesh) {
         // Update unit reference inside mesh userData
         mesh.userData.unit = unit;
 
         // Apply correct material based on unit type, unless it's currently hovered
-        if (hoveredUnitIdRef.current === unit.id) {
+        if (hoveredUnitIdRef.current === unitId) {
           mesh.material = hoverMaterialRef.current;
         } else {
-          mesh.material = getBaseMaterial(unit.type);
+          mesh.material = getBaseMaterial(unit.state.type);
         }
       }
     });
@@ -594,7 +595,7 @@ export default function Viewport3D({
     const canReuseGrid =
       gridName === lastGridNameRef.current &&
       unitMeshesRef.current.size === data.units.length &&
-      data.units.every((u) => unitMeshesRef.current.has(u.id));
+      data.units.every((u) => unitMeshesRef.current.has(u.topology.id));
 
     if (canReuseGrid) {
       updateTopologyMaterials(data);
@@ -611,7 +612,9 @@ export default function Viewport3D({
     const blockGeometries: THREE.BufferGeometry[] = [];
 
     data.blocks.forEach((block) => {
-      const boundary = block.boundary;
+      const geom = block.geometry || (block as any);
+      const topo = block.topology || (block as any);
+      const boundary = geom.boundary;
       if (boundary && boundary.length > 2) {
         const shape = new THREE.Shape();
         shape.moveTo(boundary[0][0], boundary[0][1]);
@@ -655,8 +658,10 @@ export default function Viewport3D({
 
     // 2. Construct Unit geometries (extruded buildings)
     data.units.forEach((unit) => {
-      const boundary = unit.boundary;
-      if (boundary && boundary.length > 2 && unit.height > 0) {
+      const geom = unit.geometry || (unit as any);
+      const topo = unit.topology || (unit as any);
+      const boundary = geom.boundary;
+      if (boundary && boundary.length > 2 && geom.height > 0) {
         const shape = new THREE.Shape();
         shape.moveTo(boundary[0][0], boundary[0][1]);
         for (let i = 1; i < boundary.length; i++) {
@@ -664,7 +669,23 @@ export default function Viewport3D({
         }
         shape.closePath();
 
-        const height = unit.height * 4; // floors * floor_height (default 4)
+        // 支持自身的天井挖孔
+        const hole = geom.hole;
+        if (hole && hole.length > 0) {
+          hole.forEach((holeBoundary: any) => {
+            if (holeBoundary && holeBoundary.length > 2) {
+              const holePath = new THREE.Path();
+              holePath.moveTo(holeBoundary[0][0], holeBoundary[0][1]);
+              for (let i = 1; i < holeBoundary.length; i++) {
+                holePath.lineTo(holeBoundary[i][0], holeBoundary[i][1]);
+              }
+              holePath.closePath();
+              shape.holes.push(holePath);
+            }
+          });
+        }
+
+        const height = geom.height; // 直接采用绝对高度拉伸
         let geometry: THREE.BufferGeometry = new THREE.ExtrudeGeometry(shape, {
           depth: height,
           bevelEnabled: false
@@ -676,18 +697,31 @@ export default function Viewport3D({
           geometry = nonIndexedGeometry;
         }
 
-        const meshMaterial = getBaseMaterial(unit.type);
+        const meshMaterial = getBaseMaterial(unit.state.type);
         const unitMesh = new THREE.Mesh(geometry, meshMaterial);
         
+        // Calculate Z position to stack units within the same building, using absolute height
+        const startZ = data.units
+          .filter(ou => {
+            const ouTopo = ou.topology || (ou as any);
+            return ouTopo.buildingid === topo.buildingid && ouTopo.idinbuilding < topo.idinbuilding;
+          })
+          .reduce((sum, ou) => {
+            const ouGeom = ou.geometry || (ou as any);
+            return sum + ouGeom.height;
+          }, 0);
+        
+        unitMesh.position.z = startZ;
+
         unitMesh.userData = {
           isRegion: true,
           isUnit: true,
-          unitId: unit.id,
+          unitId: topo.id,
           unit: unit
         };
 
         topologyGroup.add(unitMesh);
-        unitMeshesRef.current.set(unit.id, unitMesh);
+        unitMeshesRef.current.set(topo.id, unitMesh);
       }
     });
 
@@ -696,7 +730,8 @@ export default function Viewport3D({
 
     // Draw outlines for blocks
     data.blocks.forEach((block) => {
-      const boundary = block.boundary;
+      const geom = block.geometry || (block as any);
+      const boundary = geom.boundary;
       if (boundary && boundary.length > 2) {
         for (let i = 0; i < boundary.length; i++) {
           const p1 = boundary[i];
@@ -709,21 +744,53 @@ export default function Viewport3D({
 
     // Draw outlines for units
     data.units.forEach((unit) => {
-      const boundary = unit.boundary;
-      if (boundary && boundary.length > 2 && unit.height > 0) {
-        const height = unit.height * 4;
+      const geom = unit.geometry || (unit as any);
+      const topo = unit.topology || (unit as any);
+      const boundary = geom.boundary;
+      if (boundary && boundary.length > 2 && geom.height > 0) {
+        const startZ = data.units
+          .filter(ou => {
+            const ouTopo = ou.topology || (ou as any);
+            return ouTopo.buildingid === topo.buildingid && ouTopo.idinbuilding < topo.idinbuilding;
+          })
+          .reduce((sum, ou) => {
+            const ouGeom = ou.geometry || (ou as any);
+            return sum + ouGeom.height;
+          }, 0);
 
+        const height = geom.height;
+
+        // 外圈轮廓
         for (let i = 0; i < boundary.length; i++) {
           const p1 = boundary[i];
           const p2 = boundary[(i + 1) % boundary.length];
-          allOutlinePoints.push(new THREE.Vector3(p1[0], p1[1], p1[2] + height + 0.01));
-          allOutlinePoints.push(new THREE.Vector3(p2[0], p2[1], p2[2] + height + 0.01));
+          allOutlinePoints.push(new THREE.Vector3(p1[0], p1[1], p1[2] + startZ + height + 0.01));
+          allOutlinePoints.push(new THREE.Vector3(p2[0], p2[1], p2[2] + startZ + height + 0.01));
         }
 
         boundary.forEach((p) => {
-          allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + 0.01));
-          allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + height + 0.01));
+          allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + startZ + 0.01));
+          allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + startZ + height + 0.01));
         });
+
+        // 孔洞轮廓
+        const hole = geom.hole;
+        if (hole) {
+          hole.forEach((holeBoundary: any) => {
+            if (holeBoundary && holeBoundary.length > 2) {
+              for (let i = 0; i < holeBoundary.length; i++) {
+                const p1 = holeBoundary[i];
+                const p2 = holeBoundary[(i + 1) % holeBoundary.length];
+                allOutlinePoints.push(new THREE.Vector3(p1[0], p1[1], p1[2] + startZ + height + 0.01));
+                allOutlinePoints.push(new THREE.Vector3(p2[0], p2[1], p2[2] + startZ + height + 0.01));
+              }
+              holeBoundary.forEach((p: number[]) => {
+                allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + startZ + 0.01));
+                allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + startZ + height + 0.01));
+              });
+            }
+          });
+        }
       }
     });
 

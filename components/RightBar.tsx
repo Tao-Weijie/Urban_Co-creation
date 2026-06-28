@@ -15,8 +15,6 @@ interface RightBarProps {
   onSaveRL: () => void;
   onLoadRLFile: (file: File) => void;
   onClearRL: () => void;
-  rlBackend: 'cpu' | 'webgl';
-  onChangeRlBackend: (backend: 'cpu' | 'webgl') => void;
 }
 
 export default function RightBar({
@@ -32,13 +30,10 @@ export default function RightBar({
   isRlLoaded,
   onSaveRL,
   onLoadRLFile,
-  onClearRL,
-  rlBackend,
-  onChangeRlBackend
+  onClearRL
 }: RightBarProps) {
   const [rlEpisodesInput, setRlEpisodesInput] = useState<number>(100);
   const [rlLrInput, setRlLrInput] = useState<number>(0.001);
-  const [isRlOpen, setIsRlOpen] = useState<boolean>(true);
 
   const renderLossChart = () => {
     if (rlLossHistory.length === 0) return null;
@@ -68,7 +63,7 @@ export default function RightBar({
       : '';
 
     return (
-      <div className="bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-xl p-3 space-y-2">
+      <div className="bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-2xl p-3 space-y-2">
         <div className="flex justify-between items-center text-[8px] font-mono text-zinc-500 select-none">
           <span>Loss Trend</span>
           <span className="text-[8px] font-bold text-violet-500">
@@ -117,7 +112,7 @@ export default function RightBar({
     const govEntropyPct = Math.min(100, Math.max(0, (rlMetrics.govEntropy / maxEntropyEstimate) * 100));
 
     return (
-      <div className="bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-xl p-3.5 space-y-3 transition-all duration-300">
+      <div className="bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-2xl p-3.5 space-y-3 transition-all duration-300">
         <div className="flex justify-between items-center text-[8px] font-mono text-zinc-500 select-none">
           <span className="flex items-center gap-1 font-bold">
             <span className="relative flex h-1.5 w-1.5">
@@ -203,37 +198,21 @@ export default function RightBar({
   };
 
   return (
-    <div className="absolute top-6 right-6 z-10 w-80 max-w-sm rounded-2xl border border-black/10 bg-white/80 dark:border-white/10 dark:bg-black/70 p-5 shadow-2xl backdrop-blur-md transition-all duration-300 hover:border-black/20 dark:hover:border-white/20 text-zinc-800 dark:text-zinc-200 overflow-y-auto max-h-[92vh]">
+    <div className="absolute top-6 right-6 z-10 w-80 max-w-sm app-bar p-5 duration-300 overflow-y-auto max-h-[92vh]">
       
       {/* MAPPO Multi-Agent Training Panel */}
       <div className="space-y-3">
-        <div className="flex justify-between items-center cursor-pointer select-none" onClick={() => setIsRlOpen(!isRlOpen)}>
-          <span className="text-[10px] font-bold text-violet-500 uppercase tracking-wider block flex items-center gap-1.5">
-            {isRlTraining ? (
-              <svg className="w-3.5 h-3.5 text-violet-500 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            ) : (
-              <svg className="w-3.5 h-3.5 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2-2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" />
-              </svg>
-            )}
-            MAPPO Multi-Agent Training
+        <div className="flex justify-between items-center select-none">
+          <span className="app-title block">
+            Agent Training
           </span>
-          <span className="text-xs font-bold text-zinc-500">{isRlOpen ? '▲' : '▼'}</span>
         </div>
 
-        {isRlOpen && (
-          <div className="space-y-3 pt-1">
-            {!hasTopologyData ? (
-              <div className="text-[10px] text-zinc-500 text-center font-sans py-2 bg-black/5 dark:bg-black/35 rounded-xl border border-black/5 dark:border-white/5">
-                Upload a grid JSON first to enable RL Training.
-              </div>
-            ) : (
+        <div className="space-y-3 pt-1">
+            {!hasTopologyData ? null : (
               <>
                 {/* Parameters Form */}
-                <div className="bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-xl p-3 space-y-2 text-[9px] font-mono">
+                <div className="bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-2xl p-3 space-y-2 text-[9px] font-mono">
                   <div className="flex justify-between items-center">
                     <span className="text-zinc-500">Episodes:</span>
                     <input 
@@ -255,21 +234,10 @@ export default function RightBar({
                       <option value={0.001}>0.001</option>
                     </select>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Device Backend:</span>
-                    <select 
-                      value={rlBackend} 
-                      onChange={(e) => onChangeRlBackend(e.target.value as 'cpu' | 'webgl')}
-                      className="w-16 bg-white dark:bg-black/50 border border-black/10 dark:border-white/10 rounded px-1 py-0.5 text-right cursor-pointer"
-                    >
-                      <option value="webgl">GPU (WebGL)</option>
-                      <option value="cpu">CPU</option>
-                    </select>
-                  </div>
                 </div>
 
                 {/* Model Status Indicator */}
-                <div className="flex justify-between items-center text-[9px] font-mono text-zinc-500 bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-xl p-2.5">
+                <div className="flex justify-between items-center text-[9px] font-mono text-zinc-500 bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-2xl p-2.5">
                   <span>Model Status:</span>
                   <span className={`font-bold flex items-center gap-1 ${isRlLoaded ? 'text-emerald-500' : 'text-zinc-400'}`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${isRlLoaded ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'}`}></span>
@@ -302,7 +270,7 @@ export default function RightBar({
                     )}
                     <button 
                       onClick={onCancelTrainRL}
-                      className="w-full py-1.5 rounded-xl text-[10px] border border-red-500/20 text-red-500 hover:bg-red-500/5 hover:text-red-400 transition-all text-center cursor-pointer font-bold"
+                      className="w-full py-1.5 text-[10px] app-btn-outline border-red-500/20 text-red-500 hover:bg-red-500/5 hover:text-red-400"
                     >
                       Cancel Training
                     </button>
@@ -311,7 +279,7 @@ export default function RightBar({
                   <div className="space-y-3">
                     <button 
                       onClick={() => onTrainRL(rlEpisodesInput, rlLrInput)}
-                      className="w-full py-2 rounded-xl text-[10px] font-bold text-white bg-gradient-to-r from-violet-500 to-indigo-500 hover:opacity-95 shadow-lg shadow-violet-500/25 transition-all text-center cursor-pointer"
+                      className="w-full py-2 text-[10px] app-btn-primary"
                     >
                       Train RL Agents (MAPPO)
                     </button>
@@ -320,9 +288,9 @@ export default function RightBar({
                       <button 
                         onClick={onSaveRL}
                         disabled={!isRlLoaded}
-                        className={`w-full py-2 rounded-xl text-[10px] font-bold border transition-all text-center cursor-pointer ${
+                        className={`w-full py-2 text-[10px] app-btn-outline ${
                           isRlLoaded
-                            ? 'border-violet-500/20 text-violet-500 hover:bg-violet-500/5 shadow-md shadow-violet-500/5'
+                            ? 'border-violet-500/20 text-violet-500 hover:bg-violet-500/5'
                             : 'border-zinc-300 text-zinc-400 dark:border-zinc-800 dark:text-zinc-600 cursor-not-allowed opacity-50'
                         }`}
                       >
@@ -348,7 +316,7 @@ export default function RightBar({
 
                       <button 
                         onClick={onClearRL}
-                        className="w-full py-1.5 rounded-xl text-[9px] font-bold border border-red-500/20 text-red-500 hover:bg-red-500/5 transition-all text-center cursor-pointer"
+                        className="w-full py-1.5 text-[9px] app-btn-outline border border-red-500/20 text-red-500 hover:bg-red-500/5"
                       >
                         Clear Memory & Browser Cache
                       </button>
@@ -358,7 +326,6 @@ export default function RightBar({
               </>
             )}
           </div>
-        )}
       </div>
     </div>
   );
