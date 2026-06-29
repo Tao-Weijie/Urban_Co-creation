@@ -1,41 +1,34 @@
 import React, { useState } from 'react';
-import { RLTrainingMetrics } from '@/game_engine/training';
+import { useGame } from '../context/GameContext';
 
-interface RightBarProps {
-  hasTopologyData: boolean;
-  isRlTraining: boolean;
-  rlProgress: number;
-  rlEpisode: number;
-  rlLoss: number | null;
-  rlLossHistory: number[];
-  rlMetrics: RLTrainingMetrics | null;
-  onTrainRL: (episodes: number, lr: number) => Promise<void>;
-  onCancelTrainRL: () => void;
-  isRlLoaded: boolean;
-  onSaveRL: () => void;
-  onLoadRLFile: (file: File) => void;
-  onClearRL: () => void;
-}
+export default function RightBar() {
+  const {
+    topologyData,
+    isRlTraining,
+    rlProgress,
+    rlEpisode,
+    rlLoss,
+    rlLossHistory,
+    rlMetrics,
+    isRlLoaded,
+    rolesConfig,
+    handleTrainRL,
+    cancelTrainRL,
+    handleSaveRL,
+    onLoadRLFile,
+    handleClearRLModels
+  } = useGame();
 
-export default function RightBar({
-  hasTopologyData,
-  isRlTraining,
-  rlProgress,
-  rlEpisode,
-  rlLoss,
-  rlLossHistory,
-  rlMetrics,
-  onTrainRL,
-  onCancelTrainRL,
-  isRlLoaded,
-  onSaveRL,
-  onLoadRLFile,
-  onClearRL
-}: RightBarProps) {
-  const [rlEpisodesInput, setRlEpisodesInput] = useState<number>(100);
-  const [rlLrInput, setRlLrInput] = useState<number>(0.001);
+  const hasTopologyData = topologyData !== null;
+  const onTrainRL = handleTrainRL;
+  const onCancelTrainRL = cancelTrainRL;
+  const onSaveRL = handleSaveRL;
+  const onClearRL = handleClearRLModels;
 
-  const renderLossChart = () => {
+  const [rlEpisodesInput, setRlEpisodesInput] = useState<number | ''>(100);
+  const [rlLrInput, setRlLrInput] = useState<number | ''>(0.001);
+
+  const renderLossChartContent = () => {
     if (rlLossHistory.length === 0) return null;
 
     const w = 270;
@@ -63,10 +56,10 @@ export default function RightBar({
       : '';
 
     return (
-      <div className="bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-2xl p-3 space-y-2">
+      <div className="space-y-2">
         <div className="flex justify-between items-center text-[8px] font-mono text-zinc-500 select-none">
           <span>Loss Trend</span>
-          <span className="text-[8px] font-bold text-violet-500">
+          <span className="text-[8px] text-primary">
             Min: {minLoss.toFixed(4)} | Max: {maxLoss.toFixed(4)}
           </span>
         </div>
@@ -74,8 +67,8 @@ export default function RightBar({
           <svg className="w-full h-full overflow-visible" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
             <defs>
               <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.25" />
-                <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.0" />
+                <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.25" />
+                <stop offset="100%" stopColor="var(--primary)" stopOpacity="0.0" />
               </linearGradient>
             </defs>
 
@@ -90,12 +83,12 @@ export default function RightBar({
 
             {/* The line itself */}
             {pathData && (
-              <path d={pathData} fill="none" stroke="#8b5cf6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d={pathData} fill="none" stroke="var(--primary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             )}
 
             {/* Last data point marker */}
             {points.length > 0 && (
-              <circle cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="2.5" fill="#8b5cf6" className="animate-pulse" />
+              <circle cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="2.5" fill="var(--primary)" className="animate-pulse" />
             )}
           </svg>
         </div>
@@ -103,103 +96,68 @@ export default function RightBar({
     );
   };
 
-  const renderMetricsDashboard = () => {
+  const renderMetricsDashboardContent = () => {
     if (!rlMetrics) return null;
 
     const fmt = (val: number, decimals = 4) => val.toFixed(decimals);
     const maxEntropyEstimate = 3.5;
-    const devEntropyPct = Math.min(100, Math.max(0, (rlMetrics.devEntropy / maxEntropyEstimate) * 100));
-    const govEntropyPct = Math.min(100, Math.max(0, (rlMetrics.govEntropy / maxEntropyEstimate) * 100));
 
     return (
-      <div className="bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-2xl p-3.5 space-y-3 transition-all duration-300">
-        <div className="flex justify-between items-center text-[8px] font-mono text-zinc-500 select-none">
-          <span className="flex items-center gap-1 font-bold">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-            </span>
-            MAPPO Diagnostics
-          </span>
-          <span className="font-bold text-zinc-400 dark:text-zinc-600">Episode {rlMetrics.episode}</span>
-        </div>
+      <div className="space-y-3 pt-2">
+        {Object.keys(rolesConfig).map((roleId) => {
+          const role = rolesConfig[roleId];
+          const playerMetrics = rlMetrics.players?.[roleId] || rlMetrics.players?.[Number(roleId)];
+          if (!playerMetrics) return null;
 
-        {/* Developer Stats */}
-        <div className="space-y-1.5 border-b border-black/5 dark:border-white/5 pb-2">
-          <div className="flex justify-between items-center">
-            <span className="text-[9px] font-bold text-violet-500">Developer (Actor)</span>
-            <span className={`text-[8px] font-mono font-bold px-1.5 py-0.2 rounded ${
-              rlMetrics.devReward > 0 ? 'bg-emerald-500/10 text-emerald-500' :
-              rlMetrics.devReward < 0 ? 'bg-red-500/10 text-red-500' : 'bg-zinc-500/10 text-zinc-500'
-            }`}>
-              Rew: {rlMetrics.devReward > 0 ? '+' : ''}{fmt(rlMetrics.devReward, 3)}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-[8px] font-mono text-zinc-500">
-            <div>
-              <span className="block text-[6.5px] text-zinc-400 uppercase">Actor L</span>
-              <span className="font-bold text-zinc-700 dark:text-zinc-300">{fmt(rlMetrics.devActorLoss)}</span>
-            </div>
-            <div>
-              <span className="block text-[6.5px] text-zinc-400 uppercase">Critic L</span>
-              <span className="font-bold text-zinc-700 dark:text-zinc-300">{fmt(rlMetrics.devCriticLoss)}</span>
-            </div>
-          </div>
-          <div className="space-y-0.5 text-[8px] font-mono text-zinc-500">
-            <div className="flex justify-between text-[7px] text-zinc-400">
-              <span>Entropy</span>
-              <span>{fmt(rlMetrics.devEntropy, 2)}</span>
-            </div>
-            <div className="w-full h-1 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-300"
-                style={{ width: `${devEntropyPct}%` }}
-              />
-            </div>
-          </div>
-        </div>
+          const entropyPct = Math.min(100, Math.max(0, (playerMetrics.entropy / maxEntropyEstimate) * 100));
 
-        {/* Government Stats */}
-        <div className="space-y-1.5">
-          <div className="flex justify-between items-center">
-            <span className="text-[9px] font-bold text-indigo-500">Government (Actor)</span>
-            <span className={`text-[8px] font-mono font-bold px-1.5 py-0.2 rounded ${
-              rlMetrics.govReward > 0 ? 'bg-emerald-500/10 text-emerald-500' :
-              rlMetrics.govReward < 0 ? 'bg-red-500/10 text-red-500' : 'bg-zinc-500/10 text-zinc-500'
-            }`}>
-              Rew: {rlMetrics.govReward > 0 ? '+' : ''}{fmt(rlMetrics.govReward, 3)}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-[8px] font-mono text-zinc-500">
-            <div>
-              <span className="block text-[6.5px] text-zinc-400 uppercase">Actor L</span>
-              <span className="font-bold text-zinc-700 dark:text-zinc-300">{fmt(rlMetrics.govActorLoss)}</span>
+          return (
+            <div key={roleId} className="space-y-1.5 pb-2 last:pb-0">
+              <div className="flex justify-between items-center">
+                <span className="text-[9px] font-bold" style={{ color: role.color }}>
+                  {role.name}
+                </span>
+                <span className={`text-[8px] font-mono font-bold px-1.5 py-0.2 rounded ${playerMetrics.reward > 0 ? 'bg-emerald-500/10 text-emerald-500' :
+                  playerMetrics.reward < 0 ? 'bg-red-500/10 text-red-500' : 'bg-zinc-500/10 text-zinc-500'
+                  }`}>
+                  Rew: {playerMetrics.reward > 0 ? '+' : ''}{fmt(playerMetrics.reward, 3)}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[8px] font-mono text-zinc-500">
+                <div>
+                  <span className="block text-[6.5px] text-zinc-400 uppercase">Actor L</span>
+                  <span className="font-bold text-zinc-700 dark:text-zinc-300">{fmt(playerMetrics.actorLoss)}</span>
+                </div>
+                <div>
+                  <span className="block text-[6.5px] text-zinc-400 uppercase">Critic L</span>
+                  <span className="font-bold text-zinc-700 dark:text-zinc-300">{fmt(playerMetrics.criticLoss)}</span>
+                </div>
+              </div>
+              <div className="space-y-0.5 text-[8px] font-mono text-zinc-500">
+                <div className="flex justify-between text-[7px] text-zinc-400">
+                  <span>Entropy</span>
+                  <span>{fmt(playerMetrics.entropy, 2)}</span>
+                </div>
+                <div className="w-full h-1 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full transition-all duration-300"
+                    style={{
+                      width: `${entropyPct}%`,
+                      backgroundColor: role.color
+                    }}
+                  />
+                </div>
+              </div>
             </div>
-            <div>
-              <span className="block text-[6.5px] text-zinc-400 uppercase">Critic L</span>
-              <span className="font-bold text-zinc-700 dark:text-zinc-300">{fmt(rlMetrics.govCriticLoss)}</span>
-            </div>
-          </div>
-          <div className="space-y-0.5 text-[8px] font-mono text-zinc-500">
-            <div className="flex justify-between text-[7px] text-zinc-400">
-              <span>Entropy</span>
-              <span>{fmt(rlMetrics.govEntropy, 2)}</span>
-            </div>
-            <div className="w-full h-1 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-300"
-                style={{ width: `${govEntropyPct}%` }}
-              />
-            </div>
-          </div>
-        </div>
+          );
+        })}
       </div>
     );
   };
 
   return (
-    <div className="absolute top-6 right-6 z-10 w-80 max-w-sm app-bar p-5 duration-300 overflow-y-auto max-h-[92vh]">
-      
+    <div className="right-6 app-sidebar">
+
       {/* MAPPO Multi-Agent Training Panel */}
       <div className="space-y-3">
         <div className="flex justify-between items-center select-none">
@@ -207,125 +165,169 @@ export default function RightBar({
             Agent Training
           </span>
         </div>
-
         <div className="space-y-3 pt-1">
-            {!hasTopologyData ? null : (
-              <>
-                {/* Parameters Form */}
-                <div className="bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-2xl p-3 space-y-2 text-[9px] font-mono">
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Episodes:</span>
-                    <input 
-                      type="number" 
-                      value={rlEpisodesInput} 
-                      onChange={(e) => setRlEpisodesInput(Math.max(1, parseInt(e.target.value) || 100))}
-                      className="w-16 bg-white dark:bg-black/50 border border-black/10 dark:border-white/10 rounded px-1.5 py-0.5 text-right" 
-                    />
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Learning Rate:</span>
-                    <select 
-                      value={rlLrInput} 
-                      onChange={(e) => setRlLrInput(parseFloat(e.target.value))}
-                      className="w-16 bg-white dark:bg-black/50 border border-black/10 dark:border-white/10 rounded px-1 py-0.5 text-right cursor-pointer"
-                    >
-                      <option value={0.01}>0.010</option>
-                      <option value={0.005}>0.005</option>
-                      <option value={0.001}>0.001</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Model Status Indicator */}
-                <div className="flex justify-between items-center text-[9px] font-mono text-zinc-500 bg-black/5 dark:bg-black/35 border border-black/5 dark:border-white/5 rounded-2xl p-2.5">
-                  <span>Model Status:</span>
+          {!hasTopologyData ? null : (
+            <>
+              {/* Training Setting Section */}
+              <div className="app-section-card space-y-2.5 text-[9px] font-mono">
+                <span className="app-subtitle block">Training Setting</span>
+                {/* Model Status */}
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-500">Model Status:</span>
                   <span className={`font-bold flex items-center gap-1 ${isRlLoaded ? 'text-emerald-500' : 'text-zinc-400'}`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${isRlLoaded ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'}`}></span>
                     {isRlLoaded ? 'Loaded' : 'Not Loaded'}
                   </span>
                 </div>
 
-                {renderLossChart()}
+                {/* Episodes */}
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-500">Episodes:</span>
+                  <input
+                    type="number"
+                    value={rlEpisodesInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '') {
+                        setRlEpisodesInput('');
+                      } else {
+                        const parsed = parseInt(val);
+                        setRlEpisodesInput(isNaN(parsed) ? '' : Math.max(1, parsed));
+                      }
+                    }}
+                    className="w-16 bg-white dark:bg-black/50 outline outline-1 outline-black/10 dark:outline-white/10 rounded px-1.5 py-0.5 text-right"
+                  />
+                </div>
 
-                {renderMetricsDashboard()}
+                {/* Learning Rate */}
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-500">Learning Rate:</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={rlLrInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '') {
+                        setRlLrInput('');
+                      } else {
+                        const parsed = parseFloat(val);
+                        setRlLrInput(isNaN(parsed) ? '' : Math.max(0, parsed));
+                      }
+                    }}
+                    className="w-16 bg-white dark:bg-black/50 outline outline-1 outline-black/10 dark:outline-white/10 rounded px-1.5 py-0.5 text-right"
+                  />
+                </div>
 
-                {/* Progress and training button */}
-                {isRlTraining ? (
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-[9px] font-mono text-violet-500">
-                      <span>Training MAPPO...</span>
-                      <span>Ep {rlEpisode} / {rlEpisodesInput}</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-violet-500 transition-all duration-150" 
-                        style={{ width: `${rlProgress}%` }}
-                      />
-                    </div>
-                    {rlLoss !== null && (
-                      <div className="flex justify-between text-[9px] font-mono text-zinc-500">
-                        <span>Avg Training Loss:</span>
-                        <span className="font-semibold text-zinc-700 dark:text-zinc-300">{rlLoss.toFixed(6)}</span>
-                      </div>
-                    )}
-                    <button 
+                {/* Action Control */}
+                <div className="pt-2">
+                  {isRlTraining ? (
+                    <button
                       onClick={onCancelTrainRL}
-                      className="w-full py-1.5 text-[10px] app-btn-outline border-red-500/20 text-red-500 hover:bg-red-500/5 hover:text-red-400"
+                      className="w-full py-1.5 text-[10px] app-btn-outline outline-red-500/20 text-red-500 hover:bg-red-500/5 hover:text-red-400"
                     >
                       Cancel Training
                     </button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <button 
-                      onClick={() => onTrainRL(rlEpisodesInput, rlLrInput)}
+                  ) : (
+                    <button
+                      onClick={() => onTrainRL(rlEpisodesInput === '' ? 100 : rlEpisodesInput, rlLrInput === '' ? 0.001 : rlLrInput)}
                       className="w-full py-2 text-[10px] app-btn-primary"
                     >
-                      Train RL Agents (MAPPO)
+                      Train Agents
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Training State Section */}
+              {(rlLossHistory.length > 0 || rlMetrics !== null || isRlTraining) && (
+                <div className="app-section-card space-y-3.5">
+                  <span className="app-subtitle block">Training State</span>
+
+                  {/* 1. Loss Trend */}
+                  {renderLossChartContent()}
+
+                  {/* 2. Character Model Diagnostics */}
+                  {renderMetricsDashboardContent()}
+
+                  {/* 3. Training Progress Bar (Moved to the bottom) */}
+                  {isRlTraining && (
+                    <div className="pt-2 space-y-1.5">
+                      <div className="flex justify-between text-[9px] font-mono text-primary">
+                        <span className="font-semibold text-zinc-400 dark:text-zinc-600">Progress</span>
+                        <span>Ep {rlEpisode} / {rlEpisodesInput || 100}</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all duration-150"
+                          style={{ width: `${rlProgress}%` }}
+                        />
+                      </div>
+                      {rlLoss !== null && (
+                        <div className="flex justify-between text-[9px] font-mono text-zinc-500">
+                          <span>Avg Training Loss:</span>
+                          <span className="font-semibold text-zinc-700 dark:text-zinc-300">{rlLoss.toFixed(6)}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Training Model Section (Only visible when not actively training) */}
+              {!isRlTraining && (
+                <div className="app-section-card space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Left: Save Button */}
+                    <button
+                      onClick={onSaveRL}
+                      disabled={!isRlLoaded}
+                      className={`w-full h-[50px] text-[10px] app-btn-outline flex items-center justify-center ${isRlLoaded
+                        ? 'outline-primary/20 text-primary hover:bg-primary/5'
+                        : 'outline-zinc-300 text-zinc-400 dark:outline-zinc-800 dark:text-zinc-600 cursor-not-allowed opacity-50'
+                        }`}
+                    >
+                      Save Model
                     </button>
 
-                    <div className="border-t border-black/5 dark:border-white/5 pt-3 space-y-2">
-                      <button 
-                        onClick={onSaveRL}
-                        disabled={!isRlLoaded}
-                        className={`w-full py-2 text-[10px] app-btn-outline ${
-                          isRlLoaded
-                            ? 'border-violet-500/20 text-violet-500 hover:bg-violet-500/5'
-                            : 'border-zinc-300 text-zinc-400 dark:border-zinc-800 dark:text-zinc-600 cursor-not-allowed opacity-50'
-                        }`}
-                      >
-                        Save Models (Download File)
-                      </button>
-
-                      <label className="flex flex-col items-center justify-center w-full h-16 border border-violet-500/25 border-dashed rounded-xl cursor-pointer bg-violet-500/5 hover:bg-violet-500/10 transition-all">
-                        <div className="text-center px-4">
-                          <p className="text-[10px] text-violet-600 dark:text-violet-400 font-bold font-sans">Load Model from Unified File</p>
-                          <p className="text-[8px] text-zinc-500 font-mono mt-0.5">Select unified model (.json) file</p>
+                    {/* Right: Upload Container */}
+                    <div className="upload-container !h-[50px]">
+                      {!isRlLoaded ? (
+                        <label className="absolute inset-0 upload-btn-empty">
+                          <div className="text-center px-1">
+                            <p className="text-[9px] font-semibold font-sans">Upload agents(.json)</p>
+                          </div>
+                          <input
+                            type="file"
+                            accept=".json"
+                            className="hidden"
+                            onChange={(e) => {
+                              if (e.target.files && e.target.files.length > 0) {
+                                onLoadRLFile(e.target.files[0]);
+                              }
+                            }}
+                          />
+                        </label>
+                      ) : (
+                        <div
+                          onClick={onClearRL}
+                          className="absolute inset-0 upload-btn-filled"
+                        >
+                          <span className="font-sans text-[8px] text-zinc-400 dark:text-zinc-500 uppercase font-bold">
+                            Clear
+                          </span>
+                          <span className="truncate w-full font-bold px-1" title="model.json">
+                            Agents.json
+                          </span>
                         </div>
-                        <input 
-                          type="file" 
-                          accept=".json" 
-                          className="hidden" 
-                          onChange={(e) => {
-                            if (e.target.files && e.target.files.length > 0) {
-                              onLoadRLFile(e.target.files[0]);
-                            }
-                          }} 
-                        />
-                      </label>
-
-                      <button 
-                        onClick={onClearRL}
-                        className="w-full py-1.5 text-[9px] app-btn-outline border border-red-500/20 text-red-500 hover:bg-red-500/5"
-                      >
-                        Clear Memory & Browser Cache
-                      </button>
+                      )}
                     </div>
                   </div>
-                )}
-              </>
-            )}
-          </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

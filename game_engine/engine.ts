@@ -1,19 +1,4 @@
-export enum UnitType {
-    EMPTY = 0,
-    RESIDENTIAL = 1,
-    GREEN = 2
-}
-
-export enum PlayerType {
-    DEVELOPER = 1,
-    GOVERNMENT = 2
-}
-
-export enum ActionType {
-    SKIP = 0,
-    PLACE = 1,
-    REPLACE = 2
-}
+import { UnitType, PlayerType, ActionType, PlayerConfig } from './config';
 
 // Strict validation helper functions for enums as per project rules
 function validateUnitType(val: any): UnitType {
@@ -89,26 +74,9 @@ export class UrbanUnit {
     get holes() { return this.geometry.hole; }
 
     static fromJson(data: any): UrbanUnit {
-        const topology = data.topology || {
-            id: data.id,
-            blockid: data.blockid ?? data.parentid ?? 0,
-            buildingid: data.buildingid ?? 0,
-            idinbuilding: data.idinbuilding ?? 0
-        };
-        const geometry = data.geometry || {
-            boundary: data.boundary || [],
-            hole: data.hole ?? data.holes,
-            height: data.height !== undefined ? (data.geometry ? data.height : data.height * 4.0) : 4.0
-        };
-        const rawType = data.state?.type !== undefined ? data.state.type : (data.topology?.type ?? data.type ?? 0);
-        const state = data.state || {
-            type: rawType,
-            value: data.value,
-            population: data.population ?? 0.0
-        };
-        if (state.type === undefined || state.type === null) {
-            state.type = 0;
-        }
+        const topology = data.topology;
+        const geometry = data.geometry;
+        const state = data.state;
 
         return new UrbanUnit(
             topology.id,
@@ -172,8 +140,8 @@ export class UrbanGraph {
 
     static fromJson(data: any): UrbanGraph {
         const blocksData = data.blocks || [];
-        const blocks = blocksData.map((b: any) => b.id);
-        const neighbor = blocksData.map((b: any) => b.neighbor || []);
+        const blocks = blocksData.map((b: any) => b.topology?.id);
+        const neighbor = blocksData.map((b: any) => b.topology?.neighbor || []);
 
         const unitsJson = data.units || [];
         const units = unitsJson.map((u: any) => UrbanUnit.fromJson(u));
@@ -186,7 +154,7 @@ export class UrbanGraph {
 
         const graph = new UrbanGraph(blocks, neighbor, units, player_order, game_started, timer);
         blocksData.forEach((b: any) => {
-            graph.blockValues.set(Number(b.id), b.value ?? 30.0);
+            graph.blockValues.set(Number(b.topology?.id ?? b.id), b.state?.value ?? b.value ?? 30.0);
         });
         return graph;
     }
@@ -195,7 +163,8 @@ export class UrbanGraph {
         const metadata: any = {
             game_started: this.game_started,
             player_order: this.player_order.map(p => Number(p)),
-            timer: this.timer
+            timer: this.timer,
+            max_turns: this.units.length * 2
         };
         if (this.player_order && this.player_order.length > 0) {
             const next_player = this.player_order[0];
@@ -210,9 +179,13 @@ export class UrbanGraph {
 
         return {
             blocks: this.blocks.map(id => ({
-                id,
-                neighbor: this.getNeighbors(id),
-                value: this.blockValues.get(id) ?? 30.0
+                topology: {
+                    id,
+                    neighbor: this.getNeighbors(id)
+                },
+                state: {
+                    value: this.blockValues.get(id) ?? 30.0
+                }
             })),
             units: this.units.map(u => u.toJson()),
             metadata
@@ -221,18 +194,7 @@ export class UrbanGraph {
 }
 
 export class GameEngine {
-    static PLAYER_CONFIG = {
-        [PlayerType.DEVELOPER]: {
-            name: "Developer",
-            allowed_types: [UnitType.RESIDENTIAL],
-            allowed_actions: [ActionType.SKIP, ActionType.PLACE]
-        },
-        [PlayerType.GOVERNMENT]: {
-            name: "Government",
-            allowed_types: [UnitType.GREEN],
-            allowed_actions: [ActionType.SKIP, ActionType.PLACE]
-        }
-    };
+    static PLAYER_CONFIG = PlayerConfig;
 
     static build_game(data: any): UrbanGraph {
         const graph = UrbanGraph.fromJson(data);
@@ -288,7 +250,7 @@ export class GameEngine {
         built_type: UnitType | null
     ): UrbanGraph {
         const requested_action = [Number(action_type), unit_id];
-        
+
         const isValid = valid_actions.some(va => va[0] === requested_action[0] && va[1] === requested_action[1]);
         if (!isValid) {
             throw new Error(`Action ${JSON.stringify(requested_action)} is not valid in the current state.`);
@@ -351,7 +313,7 @@ export class GameEngine {
         return valid_actions;
     }
 
-    static evaluate(graph: UrbanGraph): { government_tax: number, developer_profit: number, total_population: number } {
+    static evaluate(graph: UrbanGraph): { government_profit: number, developer_profit: number, total_population: number } {
         const block_to_units: { [key: string]: UrbanUnit[] } = {};
         for (const u of graph.units) {
             const bid = String(u.blockid);
@@ -415,7 +377,7 @@ export class GameEngine {
         const government_net_reserve = Math.round((total_land_price + total_tax_revenue) * 10) / 10;
 
         return {
-            government_tax: Math.round(government_net_reserve),
+            government_profit: Math.round(government_net_reserve),
             developer_profit: developer_net_profit,
             total_population: total_city_population
         };
@@ -425,7 +387,7 @@ export class GameEngine {
 class TSEngine {
     private activeGameGraph: UrbanGraph | null = null;
     private activeGameValidActions: any[] = [];
-    
+
     private trainingGraph: UrbanGraph | null = null;
     private trainingValidActions: any[] = [];
 
@@ -439,6 +401,7 @@ class TSEngine {
         for (const [role, config] of Object.entries(GameEngine.PLAYER_CONFIG)) {
             serializedConfig[role] = {
                 name: config.name,
+                color: config.color,
                 allowed_types: config.allowed_types.map(t => Number(t)),
                 allowed_actions: config.allowed_actions.map(a => Number(a))
             };
@@ -449,14 +412,14 @@ class TSEngine {
     async buildGame(payload: any): Promise<any> {
         const graph = GameEngine.build_game(payload);
         const metrics = GameEngine.evaluate(graph);
-        
+
         this.activeGameGraph = graph;
         this.activeGameValidActions = [];
 
         const updatedData = graph.toJson();
         const metadata = updatedData.metadata;
         metadata.evaulate = {
-            government_tax: metrics.government_tax,
+            government_profit: metrics.government_profit,
             developer_profit: metrics.developer_profit,
             total_population: metrics.total_population
         };
@@ -473,7 +436,7 @@ class TSEngine {
             return Promise.reject(new Error("Game session not found. Please upload map grid first."));
         }
         const playerOrder: number[] = payload.player_order;
-        
+
         for (const r of playerOrder) {
             validatePlayerType(r);
         }
@@ -487,10 +450,11 @@ class TSEngine {
         const updatedData = graph.toJson();
         const metadata = updatedData.metadata;
         metadata.evaulate = {
-            government_tax: metrics.government_tax,
+            government_profit: metrics.government_profit,
             developer_profit: metrics.developer_profit,
             total_population: metrics.total_population
         };
+        metadata.valid_actions = this.activeGameValidActions;
 
         return Promise.resolve({
             blocks: updatedData.blocks,
@@ -535,10 +499,11 @@ class TSEngine {
         const updatedData = this.activeGameGraph.toJson();
         const metadata = updatedData.metadata;
         metadata.evaulate = {
-            government_tax: metrics.government_tax,
+            government_profit: metrics.government_profit,
             developer_profit: metrics.developer_profit,
             total_population: metrics.total_population
         };
+        metadata.valid_actions = this.activeGameValidActions;
 
         return Promise.resolve({
             blocks: updatedData.blocks,
@@ -575,22 +540,14 @@ class TSEngine {
         const updatedData = updatedGraph.toJson();
         const metadata = updatedData.metadata;
         metadata.evaulate = {
-            government_tax: metrics.government_tax,
+            government_profit: metrics.government_profit,
             developer_profit: metrics.developer_profit,
             total_population: metrics.total_population
         };
 
         return {
             blocks: updatedData.blocks,
-            units: updatedData.units.map((u: any) => ({
-                id: u.id,
-                blockid: u.blockid,
-                buildingid: u.buildingid,
-                idinbuilding: u.idinbuilding,
-                type: u.type,
-                height: u.height,
-                value: u.value ?? 0
-            })),
+            units: updatedData.units,
             metadata
         };
     }
@@ -627,22 +584,14 @@ class TSEngine {
         const updatedData = this.trainingGraph.toJson();
         const metadata = updatedData.metadata;
         metadata.evaulate = {
-            government_tax: metrics.government_tax,
+            government_profit: metrics.government_profit,
             developer_profit: metrics.developer_profit,
             total_population: metrics.total_population
         };
 
         return {
             blocks: updatedData.blocks,
-            units: updatedData.units.map((u: any) => ({
-                id: u.id,
-                blockid: u.blockid,
-                buildingid: u.buildingid,
-                idinbuilding: u.idinbuilding,
-                type: u.type,
-                height: u.height,
-                value: u.value ?? 0
-            })),
+            units: updatedData.units,
             metadata
         };
     }

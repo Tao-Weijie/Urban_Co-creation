@@ -1,14 +1,12 @@
 import React from 'react';
-import { UrbanUnit, TopologyData } from '@/game_engine/topology';
+import { UrbanUnit, TopologyData, UnitTypeConfig, UnitType } from '@/game_engine/config';
 
-interface HoverPanelProps {
-  hoveredUnitInfo: UrbanUnit | null;
-  hoverPosition: { x: number; y: number } | null;
-  topologyData: TopologyData | null;
-}
+import { useGame } from '../context/GameContext';
 
-export default function HoverPanel({ hoveredUnitInfo, hoverPosition, topologyData }: HoverPanelProps) {
+export default function HoverPanel() {
+  const { hoveredUnitInfo, hoverPosition, displayedTopologyData } = useGame();
   const unit = hoveredUnitInfo;
+  const topologyData = displayedTopologyData;
 
   if (!unit || !hoverPosition || !topologyData) {
     return null;
@@ -44,11 +42,14 @@ export default function HoverPanel({ hoveredUnitInfo, hoverPosition, topologyDat
     >
       <div className="space-y-3 font-mono text-xs">
         {/* Tooltip Header */}
-        <div className="flex justify-between items-center pb-2 border-b border-black/5 dark:border-white/5">
-          <span className="text-zinc-500 dark:text-zinc-400">Hovered Unit:</span>
-          <span className="font-semibold text-pink-500 truncate max-w-[130px]">
-            Unit {unit.topology.id}
-          </span>
+        <div className="space-y-2">
+          <div className="flex justify-between items-center pb-1">
+            <span className="text-zinc-500 dark:text-zinc-400">Hovered Unit:</span>
+            <span className="font-semibold text-pink-500 truncate max-w-[130px]">
+              Unit {unit.topology.id}
+            </span>
+          </div>
+          <div className="h-[1px] bg-black/5 dark:bg-white/5 w-full" />
         </div>
         
         {/* Tooltip Metrics */}
@@ -72,7 +73,7 @@ export default function HoverPanel({ hoveredUnitInfo, hoverPosition, topologyDat
           <div className="flex justify-between">
             <span>type:</span>
             <span className="text-zinc-950 dark:text-zinc-100 font-semibold">
-              {unit.state.type === 1 ? 'residential' : (unit.state.type === 2 ? 'green' : 'empty')}
+              {UnitTypeConfig[unit.state.type as UnitType]?.name || 'Empty'}
             </span>
           </div>
           <div className="flex justify-between">
@@ -89,8 +90,11 @@ export default function HoverPanel({ hoveredUnitInfo, hoverPosition, topologyDat
           </div>
         </div>
         
-        <div className="pt-2 border-t border-black/5 dark:border-white/5 text-[9px] text-zinc-500 dark:text-zinc-400 italic text-center">
-          Click on any unit mesh to edit its type.
+        <div className="space-y-2">
+          <div className="h-[1px] bg-black/5 dark:bg-white/5 w-full" />
+          <div className="pt-1 text-[9px] text-zinc-500 dark:text-zinc-400 italic text-center">
+            Click on any unit mesh to edit its type.
+          </div>
         </div>
       </div>
     </div>

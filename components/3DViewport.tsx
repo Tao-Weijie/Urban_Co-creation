@@ -4,32 +4,56 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Block, UrbanUnit, TopologyData } from '@/game_engine/topology';
+import { Block, UrbanUnit, TopologyData, UnitTypeConfig, UnitType } from '@/game_engine/config';
 
-interface Viewport3DProps {
-  modelFile: File | null;
-  modelName: string;
-  gridName: string;
-  topologyData: TopologyData | null;
-  standardView: 'top' | 'front' | 'left' | null;
-  onStandardViewProcessed: () => void;
-  onUnitHover: (unit: UrbanUnit | null, x?: number, y?: number) => void;
-  onUnitClick: (unit: UrbanUnit) => void;
-  onLoadingChange: (isLoading: boolean) => void;
-}
+import { useGame } from '../context/GameContext';
 
+export default function Viewport3D() {
+  const {
+    modelFile,
+    modelName,
+    gridName,
+    displayedTopologyData,
+    standardView,
+    setStandardView,
+    handleUnitHover,
+    isBrowsingHistory,
+    isAiThinking,
+    gameStarted,
+    isRlTraining,
+    roleAISettings,
+    displayedTurnOrder,
+    displayedActiveRoleIndex,
+    setSelectedUnitForGameAction,
+    setIsGameActionModalOpen,
+    setSelectedUnitForEdit,
+    setIsEditModalOpen,
+    setIsLoading,
+    setIsModelLoading
+  } = useGame();
 
-export default function Viewport3D({
-  modelFile,
-  modelName,
-  gridName,
-  topologyData,
-  standardView,
-  onStandardViewProcessed,
-  onUnitHover,
-  onUnitClick,
-  onLoadingChange
-}: Viewport3DProps) {
+  const topologyData = displayedTopologyData;
+
+  const onUnitClick = (unit: UrbanUnit) => {
+    if (isBrowsingHistory || isRlTraining) return; // Disable clicking during history browsing or training
+    const activePlayer = displayedTurnOrder[displayedActiveRoleIndex];
+    if (isAiThinking || (gameStarted && roleAISettings[String(activePlayer)])) return; // Disable clicking during AI thinking
+    if (gameStarted) {
+      setSelectedUnitForGameAction(unit);
+      setIsGameActionModalOpen(true);
+    } else {
+      setSelectedUnitForEdit(unit);
+      setIsEditModalOpen(true);
+    }
+  };
+
+  const onUnitHover = handleUnitHover;
+  const onStandardViewProcessed = () => setStandardView(null);
+  const onLoadingChange = (loading: boolean) => {
+    setIsLoading(loading);
+    setIsModelLoading(loading);
+  };
+
   const containerRef = useRef<HTMLDivElement>(null);
 
   const onUnitClickRef = useRef(onUnitClick);
@@ -73,44 +97,25 @@ export default function Viewport3D({
     })
   );
 
-  const residentialMaterialRef = useRef(
-    new THREE.MeshStandardMaterial({
-      color: 0xf59e0b,
-      roughness: 0.4,
-      metalness: 0.2,
-      side: THREE.DoubleSide,
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1
-    })
-  );
-
-  const greenMaterialRef = useRef(
-    new THREE.MeshStandardMaterial({
-      color: 0x10b981,
-      roughness: 0.4,
-      metalness: 0.2,
-      side: THREE.DoubleSide,
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1
-    })
-  );
-
-  const emptyMaterialRef = useRef(
-    new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      roughness: 0.4,
-      metalness: 0.2,
-      transparent: true,
-      opacity: 0.35,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1
-    })
-  );
+  const materials = React.useMemo(() => {
+    const map = new Map<number, THREE.MeshStandardMaterial>();
+    Object.entries(UnitTypeConfig).forEach(([typeStr, conf]) => {
+      const typeNum = Number(typeStr);
+      map.set(typeNum, new THREE.MeshStandardMaterial({
+        color: new THREE.Color(conf.color),
+        roughness: 0.4,
+        metalness: 0.2,
+        transparent: conf.opacity < 1,
+        opacity: conf.opacity,
+        depthWrite: conf.opacity === 1,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1
+      }));
+    });
+    return map;
+  }, []);
 
   const hoverMaterialRef = useRef(
     new THREE.MeshStandardMaterial({
@@ -131,10 +136,10 @@ export default function Viewport3D({
 
   const outlineMaterialRef = useRef(
     new THREE.LineBasicMaterial({
-      color: 0xffffff,
-      linewidth: 1.5,
+      color: 0x27272a, // Zinc-800
+      linewidth: 3,
       transparent: true,
-      opacity: 0.28
+      opacity: 0.8
     })
   );
 
@@ -151,14 +156,8 @@ export default function Viewport3D({
   const hoveredUnitIdRef = useRef<number | null>(null);
 
   const getBaseMaterial = (type?: number) => {
-    switch (type) {
-      case 1:
-        return residentialMaterialRef.current;
-      case 2:
-        return greenMaterialRef.current;
-      default:
-        return emptyMaterialRef.current;
-    }
+    const t = type !== undefined ? type : 0;
+    return materials.get(t) || materials.get(0)!;
   };
 
   // Initialize Three.js Engine
@@ -252,7 +251,7 @@ export default function Viewport3D({
       if (hoveredUnitIdRef.current !== null && hoveredMeshRef.current) {
         const prevUnit = hoveredMeshRef.current.userData.unit;
         if (prevUnit) {
-          hoveredMeshRef.current.material = getBaseMaterial(prevUnit.type);
+          hoveredMeshRef.current.material = getBaseMaterial(prevUnit.state.type);
         }
       }
       hoveredUnitIdRef.current = null;
@@ -284,7 +283,7 @@ export default function Viewport3D({
             if (hoveredUnitIdRef.current !== null && hoveredMeshRef.current) {
               const prevUnit = hoveredMeshRef.current.userData.unit;
               if (prevUnit) {
-                hoveredMeshRef.current.material = getBaseMaterial(prevUnit.type);
+                hoveredMeshRef.current.material = getBaseMaterial(prevUnit.state.type);
               }
             }
 
@@ -382,9 +381,7 @@ export default function Viewport3D({
       renderer.dispose();
 
       blockMaterialRef.current.dispose();
-      residentialMaterialRef.current.dispose();
-      greenMaterialRef.current.dispose();
-      emptyMaterialRef.current.dispose();
+      materials.forEach(mat => mat.dispose());
       hoverMaterialRef.current.dispose();
       outlineMaterialRef.current.dispose();
       sphereMaterialRef.current.dispose();
@@ -701,16 +698,7 @@ export default function Viewport3D({
         const unitMesh = new THREE.Mesh(geometry, meshMaterial);
         
         // Calculate Z position to stack units within the same building, using absolute height
-        const startZ = data.units
-          .filter(ou => {
-            const ouTopo = ou.topology || (ou as any);
-            return ouTopo.buildingid === topo.buildingid && ouTopo.idinbuilding < topo.idinbuilding;
-          })
-          .reduce((sum, ou) => {
-            const ouGeom = ou.geometry || (ou as any);
-            return sum + ouGeom.height;
-          }, 0);
-        
+        const startZ = boundary[0][2];
         unitMesh.position.z = startZ;
 
         unitMesh.userData = {
@@ -742,57 +730,7 @@ export default function Viewport3D({
       }
     });
 
-    // Draw outlines for units
-    data.units.forEach((unit) => {
-      const geom = unit.geometry || (unit as any);
-      const topo = unit.topology || (unit as any);
-      const boundary = geom.boundary;
-      if (boundary && boundary.length > 2 && geom.height > 0) {
-        const startZ = data.units
-          .filter(ou => {
-            const ouTopo = ou.topology || (ou as any);
-            return ouTopo.buildingid === topo.buildingid && ouTopo.idinbuilding < topo.idinbuilding;
-          })
-          .reduce((sum, ou) => {
-            const ouGeom = ou.geometry || (ou as any);
-            return sum + ouGeom.height;
-          }, 0);
-
-        const height = geom.height;
-
-        // 外圈轮廓
-        for (let i = 0; i < boundary.length; i++) {
-          const p1 = boundary[i];
-          const p2 = boundary[(i + 1) % boundary.length];
-          allOutlinePoints.push(new THREE.Vector3(p1[0], p1[1], p1[2] + startZ + height + 0.01));
-          allOutlinePoints.push(new THREE.Vector3(p2[0], p2[1], p2[2] + startZ + height + 0.01));
-        }
-
-        boundary.forEach((p) => {
-          allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + startZ + 0.01));
-          allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + startZ + height + 0.01));
-        });
-
-        // 孔洞轮廓
-        const hole = geom.hole;
-        if (hole) {
-          hole.forEach((holeBoundary: any) => {
-            if (holeBoundary && holeBoundary.length > 2) {
-              for (let i = 0; i < holeBoundary.length; i++) {
-                const p1 = holeBoundary[i];
-                const p2 = holeBoundary[(i + 1) % holeBoundary.length];
-                allOutlinePoints.push(new THREE.Vector3(p1[0], p1[1], p1[2] + startZ + height + 0.01));
-                allOutlinePoints.push(new THREE.Vector3(p2[0], p2[1], p2[2] + startZ + height + 0.01));
-              }
-              holeBoundary.forEach((p: number[]) => {
-                allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + startZ + 0.01));
-                allOutlinePoints.push(new THREE.Vector3(p[0], p[1], p[2] + startZ + height + 0.01));
-              });
-            }
-          });
-        }
-      }
-    });
+    // Outlines for units are removed as requested.
 
     if (allOutlinePoints.length > 0) {
       const outlineGeometry = new THREE.BufferGeometry().setFromPoints(allOutlinePoints);
@@ -800,22 +738,7 @@ export default function Viewport3D({
       topologyGroup.add(lines);
     }
 
-    // 4. Draw vertices as spheres
-    const sphereGeoms: THREE.BufferGeometry[] = [];
-
-    uniqueVertices.forEach((pos) => {
-      const geom = new THREE.SphereGeometry(0.12, 8, 8);
-      geom.translate(pos.x, pos.y, pos.z);
-      sphereGeoms.push(geom);
-    });
-
-    if (sphereGeoms.length > 0) {
-      const mergedSpheres = BufferGeometryUtils.mergeGeometries(sphereGeoms, false);
-      if (mergedSpheres) {
-        const verticesMesh = new THREE.Mesh(mergedSpheres, sphereMaterialRef.current);
-        topologyGroup.add(verticesMesh);
-      }
-    }
+    // Vertices as spheres are removed as requested.
   };
 
   // Watch for model File changes

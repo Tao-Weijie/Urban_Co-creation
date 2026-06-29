@@ -3,6 +3,7 @@
 :root {
   --background: #ececec;
   --foreground: #18181b;
+  --primary: rgb(236, 0, 140);
 }
 
 .dark {
@@ -13,6 +14,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
   --font-sans: var(--font-sora);
   --font-mono: var(--font-geist-mono);
 }
@@ -28,34 +30,77 @@ body {
 input::-webkit-outer-spin-button,
 input::-webkit-inner-spin-button {
   -webkit-appearance: none;
+  appearance: none;
   margin: 0;
 }
 
 input[type=number] {
   -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 /* Custom UI Layout Classes */
-.app-bar {
-  @apply border border-black/10 bg-white/80 dark:border-white/10 dark:bg-black/70 rounded-[36px] backdrop-blur-md transition-all text-zinc-800 dark:text-zinc-200 hover:border-black/20 dark:hover:border-white/20;
+.app-bar,
+.app-sidebar {
+  @apply outline outline-1 outline-black/10 bg-white/80 dark:outline-white/10 dark:bg-black/70 rounded-[36px] backdrop-blur-md transition-all text-zinc-800 dark:text-zinc-200 hover:outline-black/20 dark:hover:outline-white/20;
+}
+
+.app-sidebar {
+  @apply absolute top-6 z-10 w-80 max-w-sm p-5 duration-300 overflow-y-auto max-h-[92vh];
+}
+
+.app-section-card {
+  @apply bg-black/5 outline outline-1 outline-black/5 dark:bg-black/35 dark:outline-white/5 rounded-2xl p-3;
+}
+
+.role-bar {
+  @apply flex items-center justify-between p-2.5 rounded-xl outline outline-1 transition-all;
+}
+
+/* Switch Component Styling (Resolves Alignments & Offsets) */
+.app-switch,
+.app-switch-sm,
+.app-switch-md {
+  @apply relative inline-flex flex-shrink-0 cursor-pointer rounded-full outline outline-transparent transition-colors duration-200 focus:outline-none items-center px-0.5;
+}
+
+.app-switch-dot,
+.app-switch-sm-dot,
+.app-switch-md-dot {
+  @apply pointer-events-none inline-block rounded-full bg-white shadow transition duration-200 ease-in-out;
+}
+
+.app-switch-sm {
+  @apply h-3.5 w-7;
+}
+
+.app-switch-sm-dot {
+  @apply h-2.5 w-2.5;
+}
+
+.app-switch-md {
+  @apply h-6 w-11;
+}
+
+.app-switch-md-dot {
+  @apply h-5 w-5;
 }
 
 .app-btn-primary {
-  background-color: rgb(236, 0, 140);
-  @apply rounded-xl font-bold transition-all text-center cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] select-none text-white hover:opacity-95;
+  @apply bg-primary rounded-xl font-bold transition-all text-center cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] select-none text-white hover:opacity-95;
 }
 
 .app-btn-secondary {
-  @apply rounded-xl bg-black/5 border border-black/5 dark:bg-white/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/12 text-zinc-700 dark:text-zinc-300 transition-all cursor-pointer active:scale-95 select-none;
+  @apply rounded-xl bg-black/5 outline outline-1 outline-black/5 dark:bg-white/5 dark:outline-white/5 hover:bg-black/10 dark:hover:bg-white/12 text-zinc-700 dark:text-zinc-300 transition-all cursor-pointer active:scale-95 select-none;
 }
 
 .app-btn-outline {
-  @apply rounded-xl font-bold border transition-all text-center cursor-pointer select-none active:scale-[0.98];
+  @apply rounded-xl font-bold outline outline-1 transition-all text-center cursor-pointer select-none active:scale-[0.98];
 }
 
 .app-title {
   font-family: var(--font-sora), sans-serif;
-  color: rgb(236, 0, 140) !important;
+  color: var(--primary) !important;
   font-size: 16px;
   font-weight: 700;
   text-transform: capitalize;
@@ -64,9 +109,110 @@ input[type=number] {
 
 .app-subtitle {
   font-family: var(--font-sora), sans-serif;
-  color: rgb(236, 0, 140) !important;
+  color: var(--primary) !important;
   font-size: 12px;
   font-weight: 400;
   text-transform: none;
   letter-spacing: normal;
+}
+
+.indicator-label {
+  font-size: 10px;
+  font-weight: 400;
+  @apply text-zinc-500 dark:text-zinc-400 font-mono;
+}
+
+.indicator-value {
+  font-size: 10px;
+  font-weight: 600;
+  @apply font-mono;
+}
+
+/* Centralized Upload Box Classes */
+.upload-container {
+  @apply relative overflow-hidden rounded-xl h-[50px] w-full;
+}
+
+.upload-btn-empty {
+  @apply flex flex-col items-center justify-center outline outline-1 outline-dashed rounded-xl transition-all cursor-pointer bg-transparent text-primary outline-primary/25;
+}
+
+.upload-btn-empty:hover {
+  @apply outline-primary bg-primary/5;
+}
+
+.upload-btn-empty.disabled {
+  @apply opacity-40 cursor-not-allowed;
+  outline-color: rgba(161, 161, 170, 0.3) !important;
+  background-color: transparent !important;
+}
+
+
+.upload-btn-filled {
+  @apply flex flex-col items-center justify-center outline outline-1 rounded-xl p-2 font-mono text-[9px] transition-all text-center select-none cursor-pointer;
+  outline-color: rgba(9, 9, 11, 0.1);
+  background-color: rgb(244, 244, 245);
+  color: rgb(63, 63, 70);
+}
+
+.upload-btn-filled > span:first-of-type {
+  display: none;
+}
+
+.upload-btn-filled > span:last-of-type {
+  display: block;
+}
+
+.dark .upload-btn-filled {
+  outline-color: rgba(255, 255, 255, 0.08);
+  background-color: rgba(39, 39, 42, 0.5);
+  color: rgb(212, 212, 216);
+}
+
+.upload-btn-filled:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+  outline-color: rgba(239, 68, 68, 0.3);
+  color: rgb(239, 68, 68);
+}
+
+.upload-btn-filled:not(.disabled):hover > span:first-of-type {
+  display: block;
+  color: rgb(239, 68, 68) !important;
+  margin: 0 !important;
+}
+
+.upload-btn-filled:not(.disabled):hover > span:last-of-type {
+  display: none;
+}
+
+.upload-btn-filled.disabled {
+  @apply opacity-40 cursor-not-allowed;
+  outline-color: rgba(161, 161, 170, 0.3) !important;
+  background-color: rgba(244, 244, 245, 0.3) !important;
+  color: rgba(63, 63, 70, 0.4) !important;
+}
+
+.dark .upload-btn-filled.disabled {
+  background-color: rgba(39, 39, 42, 0.15) !important;
+  color: rgba(212, 212, 216, 0.3) !important;
+}
+
+.upload-wave {
+  @apply absolute bottom-0 left-0 right-0 pointer-events-none bg-primary;
+  animation: fillUp 1.8s ease-in-out infinite;
+}
+
+@keyframes fillUp {
+  0% {
+    height: 0%;
+    opacity: 0.15;
+  }
+  50% {
+    height: 100%;
+    opacity: 0.55;
+  }
+  100% {
+    height: 100%;
+    opacity: 0;
+  }
 }

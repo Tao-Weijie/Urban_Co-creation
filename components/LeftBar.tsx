@@ -1,98 +1,86 @@
 import React from 'react';
-
-interface LeftBarProps {
-  modelName: string;
-  gridName: string;
-  isLoading: boolean;
-  macroStats: {
-    total_population: number;
-    developer_profit: number;
-    government_tax: number;
-  };
-  onModelUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onModelClear: () => void;
-  onJsonUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onJsonClear: () => void;
-  hasTopologyData: boolean;
-  isModelLoading?: boolean;
-  isMapLoading?: boolean;
-
-  // Turn-based game loop props
-  gameStarted: boolean;
-  turnOrder: (string | number)[];
-  activeRoleIndex: number;
-  turnNumber: number;
-  onStartGame: () => void;
-  onUpdateTurnOrder: (newOrder: (string | number)[]) => void;
-  rolesConfig: Record<string, { name: string; allowed_types: number[]; allowed_actions: (string | number)[] }>;
-  roleAISettings: Record<string, boolean>;
-  onToggleRoleAI: (roleId: string) => void;
-  isPaused: boolean;
-  isGameOver: boolean;
-  onTogglePause: () => void;
-  onEndGame: () => void;
-}
-
-const ROLE_STYLES: Record<string, { bgClass: string; activeBorderClass: string; dotClass: string }> = {
-  "1": {
-    bgClass: 'bg-amber-500/10 border-amber-500/25 text-amber-700 dark:text-amber-400',
-    activeBorderClass: 'ring-2 ring-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.45)] border-amber-500',
-    dotClass: 'bg-amber-500'
-  },
-  "2": {
-    bgClass: 'bg-cyan-500/10 border-cyan-500/25 text-cyan-700 dark:text-cyan-400',
-    activeBorderClass: 'ring-2 ring-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.45)] border-cyan-500',
-    dotClass: 'bg-cyan-500'
-  }
-};
-
-const DEFAULT_STYLE = {
-  bgClass: 'bg-pink-500/10 border-pink-500/25 text-pink-700 dark:text-pink-400',
-  activeBorderClass: 'ring-2 ring-pink-500 shadow-[0_0_15px_rgba(236,72,153,0.45)] border-pink-500',
-  dotClass: 'bg-pink-500'
-};
+import { JsonImporter } from './JsonImporter';
+import { GlobalStateIndicatorsConfig } from '../game_engine/config';
+import { useGame } from '../context/GameContext';
+import { hexToRgba } from './global';
 
 const getRoleDetails = (
   role: string | number,
-  rolesConfig: Record<string, { name: string; allowed_types: number[]; allowed_actions: (string | number)[] }>
+  rolesConfig: Record<string, { name: string; color: string; allowed_types: number[]; allowed_actions: (string | number)[] }>
 ) => {
   const roleIdStr = String(role);
   const config = rolesConfig[roleIdStr];
-  const style = ROLE_STYLES[roleIdStr] || DEFAULT_STYLE;
+  const color = config?.color || '#ec4899'; // Fallback to pink if config isn't loaded yet
 
   return {
     name: config?.name || `Role ${roleIdStr}`,
-    ...style
+    styles: {
+      backgroundColor: hexToRgba(color, 0.1),
+      outline: `1px solid ${hexToRgba(color, 0.25)}`,
+      color: color
+    },
+    activeStyles: {
+      backgroundColor: hexToRgba(color, 0.1),
+      color: color,
+      outline: `2px solid ${color}`
+    },
+    dotStyles: {
+      backgroundColor: color
+    }
   };
 };
 
+export default function LeftBar() {
+  const {
+    modelName,
+    gridName,
+    isModelLoading,
+    setIsModelLoading,
+    isMapLoading,
+    setIsMapLoading,
+    displayedTopologyData,
+    displayedGlobal,
+    gameStarted,
+    isRlTraining,
+    displayedTurnOrder,
+    displayedActiveRoleIndex,
+    displayedTurnNumber,
+    rolesConfig,
+    roleAISettings,
+    isPaused,
+    isGameOver,
+    handleToggleRoleAI,
+    handleModelUpload,
+    clearBackgroundModel,
+    clearTopologyGrid,
+    handleStartGame,
+    handleResetGame,
+    setIsPaused,
+    setTurnOrder,
+    handleJsonImported,
+    handleJsonLoadingStart,
+    handleJsonLoadingEnd
+  } = useGame();
 
-export default function LeftBar({
-  modelName,
-  gridName,
-  isLoading,
-  macroStats,
-  onModelUpload,
-  onModelClear,
-  onJsonUpload,
-  onJsonClear,
-  hasTopologyData,
-  isModelLoading = false,
-  isMapLoading = false,
-  gameStarted,
-  turnOrder,
-  activeRoleIndex,
-  turnNumber,
-  onStartGame,
-  onUpdateTurnOrder,
-  rolesConfig,
-  roleAISettings,
-  onToggleRoleAI,
-  isPaused,
-  isGameOver,
-  onTogglePause,
-  onEndGame
-}: LeftBarProps) {
+  const topologyData = displayedTopologyData;
+  const global = displayedGlobal;
+  const turnOrder = displayedTurnOrder;
+  const activeRoleIndex = displayedActiveRoleIndex;
+  const turnNumber = displayedTurnNumber;
+
+  const hasTopologyData = topologyData !== null;
+  const onModelUpload = handleModelUpload;
+  const onModelClear = clearBackgroundModel;
+  const onTogglePause = () => setIsPaused(!isPaused);
+  const onEndGame = handleResetGame;
+  const onToggleRoleAI = handleToggleRoleAI;
+  const onUpdateTurnOrder = setTurnOrder;
+  const onStartGame = handleStartGame;
+
+  const onJsonImported = handleJsonImported;
+  const onJsonLoadingStart = handleJsonLoadingStart;
+  const onJsonLoadingEnd = handleJsonLoadingEnd;
+  const onJsonClear = clearTopologyGrid;
   const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
@@ -123,141 +111,73 @@ export default function LeftBar({
     : [1, 2];
 
   return (
-    <div className="absolute top-6 left-6 z-10 w-80 max-w-sm app-bar p-5 duration-300 overflow-y-auto max-h-[92vh]">
+    <div className="left-6 app-sidebar">
 
-      {/* Inline styles for custom upload animations */}
-      <style>{`
-        @keyframes fillUp {
-          0% {
-            height: 0%;
-            opacity: 0.15;
-          }
-          50% {
-            height: 100%;
-            opacity: 0.55;
-          }
-          100% {
-            height: 100%;
-            opacity: 0;
-          }
-        }
-      `}</style>
       {/* Game Setting Main Header */}
       <div className="mb-4">
         <h2 className="app-title">Game Setting</h2>
       </div>
 
       {/* Load Urban Section */}
-      <div className="mb-4 space-y-2 last:mb-0">
-        <span className="app-subtitle block">Load Urban</span>
-        <div className="bg-black/5 border border-black/5 dark:bg-black/35 dark:border-white/5 rounded-2xl p-3">
+      <div className="mb-4 last:mb-0">
+        <div className="app-section-card space-y-3">
           <div className="grid grid-cols-2 gap-3">
-
             {/* Environment Model Upload */}
-            <div className="relative overflow-hidden rounded-xl h-20">
+            <div className="upload-container">
               {!modelName ? (
-                <label
-                  className={`absolute inset-0 flex flex-col items-center justify-center border border-dashed rounded-xl transition-all ${gameStarted
-                      ? 'border-zinc-300 dark:border-zinc-800 opacity-40 cursor-not-allowed'
-                      : 'border-zinc-300 hover:border-pink-500 dark:border-zinc-700 dark:hover:border-pink-500 bg-transparent cursor-pointer'
-                    }`}
-                >
+                <label className={`absolute inset-0 upload-btn-empty ${(gameStarted || isRlTraining) ? 'disabled' : ''}`}>
                   <div className="text-center px-2">
-                    <p className="text-[9px] text-zinc-500 dark:text-zinc-400 font-semibold font-sans">Upload model(.obj)</p>
+                    <p className="text-[9px] font-semibold font-sans">Upload model(.obj)</p>
                   </div>
                   <input
                     type="file"
                     className="hidden"
                     accept=".glb,.gltf,.obj"
                     onChange={onModelUpload}
-                    disabled={gameStarted}
+                    disabled={gameStarted || isRlTraining}
                   />
                 </label>
               ) : (
                 <div
                   onClick={() => {
-                    if (!gameStarted) {
+                    if (!gameStarted && !isRlTraining) {
                       onModelClear();
                     }
                   }}
-                  className={`absolute inset-0 flex flex-col items-center justify-center border rounded-xl p-2 font-mono text-[9px] transition-all text-center select-none ${gameStarted
-                      ? 'border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-800/30 text-zinc-400 dark:text-zinc-600 opacity-40 cursor-not-allowed'
-                      : 'border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-300 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500 cursor-pointer group'
-                    }`}
+                  className={`absolute inset-0 upload-btn-filled ${(gameStarted || isRlTraining) ? 'disabled' : ''}`}
                 >
-                  <span className="font-sans text-[8px] text-zinc-400 dark:text-zinc-500 group-hover:text-red-500/80 transition-colors uppercase font-bold mb-1">
-                    {gameStarted ? 'Locked' : 'Clear Model'}
+                  <span className="font-sans text-[8px] text-zinc-400 dark:text-zinc-500 uppercase font-bold">
+                    {(gameStarted || isRlTraining) ? 'Locked' : 'Clear Model'}
                   </span>
                   <span className="truncate w-full font-bold px-1" title={modelName}>{modelName}</span>
                 </div>
               )}
 
               {/* Bottom-to-top wave fill */}
-              {isModelLoading && (
-                <div className="absolute bottom-0 left-0 right-0 bg-pink-500 dark:bg-pink-500 pointer-events-none animate-[fillUp_1.8s_ease-in-out_infinite]" />
-              )}
+              {isModelLoading && <div className="upload-wave" />}
             </div>
 
             {/* Interactive Map Upload */}
-            <div className="relative overflow-hidden rounded-xl h-20">
-              {!gridName ? (
-                <label
-                  className={`absolute inset-0 flex flex-col items-center justify-center border border-dashed rounded-xl transition-all ${gameStarted
-                      ? 'border-zinc-300 dark:border-zinc-800 opacity-40 cursor-not-allowed'
-                      : 'border-zinc-300 hover:border-pink-500 dark:border-zinc-700 dark:hover:border-pink-500 bg-transparent cursor-pointer'
-                    }`}
-                >
-                  <div className="text-center px-2">
-                    <p className="text-[9px] text-zinc-500 dark:text-zinc-400 font-semibold font-sans">Upload map(.json)</p>
-                  </div>
-                  <input
-                    type="file"
-                    className="hidden"
-                    accept=".json"
-                    onChange={onJsonUpload}
-                    disabled={gameStarted}
-                  />
-                </label>
-              ) : (
-                <div
-                  onClick={() => {
-                    if (!gameStarted) {
-                      onJsonClear();
-                    }
-                  }}
-                  className={`absolute inset-0 flex flex-col items-center justify-center border rounded-xl p-2 font-mono text-[9px] transition-all text-center select-none ${gameStarted
-                      ? 'border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-800/30 text-zinc-400 dark:text-zinc-600 opacity-40 cursor-not-allowed'
-                      : 'border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-300 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500 cursor-pointer group'
-                    }`}
-                >
-                  <span className="font-sans text-[8px] text-zinc-400 dark:text-zinc-500 group-hover:text-red-500/80 transition-colors uppercase font-bold mb-1">
-                    {gameStarted ? 'Locked' : 'Clear Map'}
-                  </span>
-                  <span className="truncate w-full font-bold px-1" title={gridName}>{gridName}</span>
-                </div>
-              )}
-
-              {/* Bottom-to-top wave fill */}
-              {isMapLoading && (
-                <div className="absolute bottom-0 left-0 right-0 bg-pink-500 dark:bg-pink-500 pointer-events-none animate-[fillUp_1.8s_ease-in-out_infinite]" />
-              )}
-            </div>
+            <JsonImporter
+              gridName={gridName}
+              gameStarted={gameStarted || isRlTraining}
+              isMapLoading={isMapLoading}
+              onJsonClear={onJsonClear}
+              onJsonImported={onJsonImported}
+              onLoadingStart={onJsonLoadingStart}
+              onLoadingEnd={onJsonLoadingEnd}
+            />
 
           </div>
         </div>
       </div>
 
       {/* Game Mode Controls Panel */}
-      <div className="mb-4 space-y-2 last:mb-0">
-        <div className="flex justify-between items-center">
-          <span className="app-subtitle block">Game Mode</span>
-          {gameStarted && (
-            <span className="text-[10px] font-mono font-bold bg-pink-500/20 text-pink-600 dark:text-pink-400 px-2 py-0.5 rounded-full">
-              Turn {turnNumber}
-            </span>
-          )}
-        </div>
-        <div className="bg-black/5 border border-black/5 dark:bg-black/35 dark:border-white/5 rounded-2xl p-3">
+      <div className="mb-4 last:mb-0">
+        <div className="app-section-card space-y-3">
+          <div className="flex justify-between items-center">
+            <span className="app-subtitle block">Game Mode</span>
+          </div>
           {!gameStarted ? (
             /* SETUP PHASE */
             <div className="space-y-3">
@@ -268,29 +188,36 @@ export default function LeftBar({
                   return (
                     <div
                       key={role}
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, index)}
-                      onDragOver={(e) => handleDragOver(e, index)}
+                      draggable={!isRlTraining}
+                      onDragStart={(e) => {
+                        if (isRlTraining) return;
+                        handleDragStart(e, index);
+                      }}
+                      onDragOver={(e) => {
+                        if (isRlTraining) return;
+                        handleDragOver(e, index);
+                      }}
                       onDragEnd={handleDragEnd}
-                      className={`flex items-center justify-between p-2.5 rounded-xl border ${details.bgClass} cursor-grab active:cursor-grabbing transition-all ${draggedIndex === index ? 'opacity-50 border-pink-500' : ''
-                        }`}
+                      style={details.styles}
+                      className={`role-bar ${isRlTraining ? 'cursor-not-allowed opacity-60' : 'cursor-grab active:cursor-grabbing'} ${draggedIndex === index ? 'opacity-50 outline-pink-500' : ''}`}
                     >
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-bold">{index + 1}.</span>
-                        <span className={`w-2 h-2 rounded-full ${details.dotClass}`}></span>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-bold font-sans">{details.name}</span>
-                        </div>
+                        <span className="text-xs font-bold font-sans">{details.name}</span>
                       </div>
 
                       {/* AI Toggle Switch */}
                       <div className="flex items-center gap-1.5 bg-black/5 dark:bg-white/5 px-2 py-1 rounded-lg" onClick={(e) => e.stopPropagation()}>
                         <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400">AI</span>
                         <button
-                          onClick={() => onToggleRoleAI(String(role))}
-                          className={`relative inline-flex h-3.5 w-7 flex-shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 focus:outline-none ${isAIEnabled ? 'bg-pink-500' : 'bg-zinc-300 dark:bg-zinc-700'}`}
+                          onClick={() => {
+                            if (!isRlTraining) {
+                              onToggleRoleAI(String(role));
+                            }
+                          }}
+                          disabled={isRlTraining}
+                          className={`app-switch-sm ${isAIEnabled ? 'bg-pink-500' : 'bg-zinc-300 dark:bg-zinc-700'} ${isRlTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
-                          <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white shadow transition duration-200 ${isAIEnabled ? 'translate-x-3.5' : 'translate-x-0'}`} />
+                          <span className={`app-switch-sm-dot ${isAIEnabled ? 'translate-x-3.5' : 'translate-x-0'}`} />
                         </button>
                       </div>
                     </div>
@@ -301,10 +228,10 @@ export default function LeftBar({
               <div className="flex flex-col gap-2">
                 <button
                   onClick={onStartGame}
-                  disabled={!hasTopologyData}
-                  className={`w-full py-2 text-[10px] app-btn-primary ${hasTopologyData
-                      ? ''
-                      : '!bg-zinc-400 dark:!bg-zinc-700 cursor-not-allowed opacity-50'
+                  disabled={!hasTopologyData || isRlTraining}
+                  className={`w-full py-2 text-[10px] app-btn-primary ${(!hasTopologyData || isRlTraining)
+                    ? '!bg-zinc-400 dark:!bg-zinc-700 cursor-not-allowed opacity-50'
+                    : ''
                     }`}
                 >
                   Start Game
@@ -314,8 +241,6 @@ export default function LeftBar({
           ) : (
             /* PLAY PHASE */
             <div className="space-y-3">
-              <div className="app-subtitle">Whose Turn:</div>
-
               <div className="space-y-2">
                 {fixedRoles.map((roleKey) => {
                   const activeRoleVal = turnOrder[activeRoleIndex];
@@ -325,15 +250,13 @@ export default function LeftBar({
                   return (
                     <div
                       key={roleKey}
-                      className={`flex items-center justify-between p-2.5 rounded-xl border ${details.bgClass} ${isActive ? details.activeBorderClass : 'opacity-40'} transition-all duration-300`}
+                      style={isActive ? details.activeStyles : details.styles}
+                      className={`role-bar ${isActive ? '' : 'opacity-40'} transition-all duration-300`}
                     >
                       <div className="flex items-center gap-2">
-                        <span className={`w-2.5 h-2.5 rounded-full ${details.dotClass} ${isActive ? 'animate-pulse' : ''}`}></span>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-bold font-sans">
-                            {details.name}
-                          </span>
-                        </div>
+                        <span className="text-xs font-bold font-sans">
+                          {details.name}
+                        </span>
                       </div>
 
                       {/* AI Toggle Switch */}
@@ -341,9 +264,9 @@ export default function LeftBar({
                         <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400">AI</span>
                         <button
                           onClick={() => onToggleRoleAI(String(roleKey))}
-                          className={`relative inline-flex h-3.5 w-7 flex-shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 focus:outline-none ${isAIEnabled ? 'bg-pink-500' : 'bg-zinc-300 dark:bg-zinc-700'}`}
+                          className={`app-switch-sm ${isAIEnabled ? 'bg-pink-500' : 'bg-zinc-300 dark:bg-zinc-700'}`}
                         >
-                          <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white shadow transition duration-200 ${isAIEnabled ? 'translate-x-3.5' : 'translate-x-0'}`} />
+                          <span className={`app-switch-sm-dot ${isAIEnabled ? 'translate-x-3.5' : 'translate-x-0'}`} />
                         </button>
                       </div>
                     </div>
@@ -351,32 +274,30 @@ export default function LeftBar({
                 })}
               </div>
 
-              <div className="space-y-3 pt-1">
-                <div className="flex gap-2">
-                  {isGameOver ? (
+              <div className="flex gap-2">
+                {isGameOver ? (
+                  <button
+                    onClick={onEndGame}
+                    className="w-full py-2 text-[10px] app-btn-primary"
+                  >
+                    End Game
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={onTogglePause}
+                      className="flex-1 py-2 text-[10px] app-btn-secondary"
+                    >
+                      {isPaused ? 'Resume' : 'Pause'}
+                    </button>
                     <button
                       onClick={onEndGame}
-                      className="w-full py-2.5 text-[10px] app-btn-primary"
+                      className="flex-1 py-2 text-[10px] app-btn-outline outline-red-500/20 text-red-500 hover:bg-red-500/5 dark:text-red-400 dark:hover:text-red-300"
                     >
                       End Game
                     </button>
-                  ) : (
-                    <>
-                      <button
-                        onClick={onTogglePause}
-                        className="flex-1 py-2.5 text-[10px] app-btn-secondary"
-                      >
-                        {isPaused ? 'Resume' : 'Pause'}
-                      </button>
-                      <button
-                        onClick={onEndGame}
-                        className="flex-1 py-2.5 text-[10px] app-btn-outline border-red-500/20 text-red-500 hover:bg-red-500/5 dark:text-red-400 dark:hover:text-red-300"
-                      >
-                        End Game
-                      </button>
-                    </>
-                  )}
-                </div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -385,20 +306,31 @@ export default function LeftBar({
 
       {/* SECTION 3: Macro Indicators */}
       {hasTopologyData && (
-        <div className="mb-4 space-y-2 font-mono text-[10px] last:mb-0">
-          <span className="app-subtitle block">Game State</span>
-          <div className="bg-black/5 border border-black/5 dark:bg-black/35 dark:border-white/5 rounded-2xl p-3 space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-zinc-500 dark:text-zinc-400">Total Population:</span>
-              <span className="font-semibold text-emerald-600 dark:text-emerald-400">{macroStats.total_population} Ppl</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-zinc-500 dark:text-zinc-400">Developer Capital:</span>
-              <span className="font-semibold text-pink-600 dark:text-pink-500">${macroStats.developer_profit.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-zinc-500 dark:text-zinc-400">Government Capital:</span>
-              <span className="font-semibold text-cyan-600 dark:text-cyan-400">${macroStats.government_tax.toLocaleString()}</span>
+        <div className="mb-4 last:mb-0">
+          <div className="app-section-card space-y-3">
+            <span className="app-subtitle block">Game State</span>
+            <div className="space-y-2">
+              {GlobalStateIndicatorsConfig.map((ind) => {
+                const val = ind.getValue(topologyData, global);
+                if (val === undefined || val === null) {
+                  return null;
+                }
+
+                const displayColor = ind.color;
+                const formattedVal = typeof val === 'number' ? val.toLocaleString() : val;
+
+                return (
+                  <div key={ind.key} className="flex justify-between items-center">
+                    <span className="indicator-label">{ind.key}:</span>
+                    <span
+                      className={`indicator-value ${displayColor ? '' : 'text-zinc-700 dark:text-zinc-300'}`}
+                      style={displayColor ? { color: displayColor } : undefined}
+                    >
+                      {formattedVal}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

@@ -1,5 +1,7 @@
 import * as tf from '@tensorflow/tfjs';
-import { tsEngine, PlayerType } from './tsEngine';
+import '@tensorflow/tfjs-backend-webgpu';
+import { tsEngine } from './engine';
+import { PlayerType } from './config';
 
 
 export interface TopologyData {
@@ -11,7 +13,7 @@ export interface TopologyData {
     valid_action?: number[];
     valid_type?: number[];
     evaulate?: {
-      government_tax: number;
+      government_profit: number;
       developer_profit: number;
       total_population: number;
     };
@@ -27,7 +29,7 @@ export interface TopologyData {
 export function buildNeighborMap(blocks: any[]): Map<number, number[]> {
   const map = new Map<number, number[]>();
   for (const b of blocks) {
-    map.set(Number(b.id), (b.neighbor || []).map(Number));
+    map.set(Number(b.topology.id), (b.topology.neighbor || []).map(Number));
   }
   return map;
 }
@@ -50,7 +52,7 @@ export function encodeGraphState(
   // Build block → units index for neighbour lookups
   const blockUnits = new Map<number, any[]>();
   for (const u of graph.units) {
-    const bid = Number(u.blockid ?? -1);
+    const bid = Number(u.topology.blockid);
     if (!blockUnits.has(bid)) blockUnits.set(bid, []);
     blockUnits.get(bid)!.push(u);
   }
@@ -60,14 +62,15 @@ export function encodeGraphState(
 
   const features: number[] = [];
   for (const u of graph.units) {
-    const bid = Number(u.blockid ?? -1);
-    const blockObj = graph.blocks.find(b => b.id === bid);
-    const v = blockObj?.value ?? u.value ?? 30;
-    const h   = u.height ?? 1;
+    const bid = Number(u.topology.blockid);
+    const blockObj = graph.blocks.find(b => Number(b.topology.id) === bid);
+    const v = blockObj?.state.value ?? u.state.value ?? 30;
+    const h = u.geometry.height;
+    const type = u.state.type;
 
-    features.push(u.type === 0 ? 1 : 0);       // is_empty
-    features.push(u.type === 1 ? 1 : 0);       // is_residential
-    features.push(u.type === 2 ? 1 : 0);       // is_green
+    features.push(type === 0 ? 1 : 0);       // is_empty
+    features.push(type === 1 ? 1 : 0);       // is_residential
+    features.push(type === 2 ? 1 : 0);       // is_green
     features.push(h / 10.0);                   // height normalised
     features.push(v / 100.0);                  // land value (evaluation knowledge)
 
@@ -75,7 +78,7 @@ export function encodeGraphState(
     // Estimated developer net profit if this unit becomes residential.
     // Formula: revenue = pop × v × 0.5;  cost = v × h × 10
     const pop_per_floor = P_max * Math.exp(-Math.pow(v - mu, 2) / (2 * sigma * sigma));
-    const est_pop  = Math.round(pop_per_floor) * h;
+    const est_pop = Math.round(pop_per_floor) * h;
     const dev_gain = Math.max(0, est_pop * v * 0.5 - v * h * 10);
     features.push(Math.min(1, dev_gain / 50000.0));
 
@@ -86,10 +89,10 @@ export function encodeGraphState(
     let gov_gain = 0;
     if (neighborMap) {
       const neighborIds = neighborMap.get(bid) ?? [];
-      const sameRes = (blockUnits.get(bid) ?? []).filter((bu: any) => bu.type === 1).length;
+      const sameRes = (blockUnits.get(bid) ?? []).filter((bu: any) => bu.state.type === 1).length;
       let nbRes = 0;
       for (const nid of neighborIds) {
-        nbRes += (blockUnits.get(nid) ?? []).filter((nu: any) => nu.type === 1).length;
+        nbRes += (blockUnits.get(nid) ?? []).filter((nu: any) => nu.state.type === 1).length;
       }
       // Approximate tax boost: each nearby residential unit contributes ~500 tax units
       gov_gain = (sameRes + nbRes * 0.5) * 500;
@@ -201,21 +204,27 @@ function getValidActions(state: TopologyData): (number | null)[][] {
     const units = state.units || [];
     const buildingUnits = new Map<number, any[]>();
     for (const u of units) {
-      if (!buildingUnits.has(u.buildingid)) {
-        buildingUnits.set(u.buildingid, []);
+      const bid = u.topology.buildingid;
+      if (!buildingUnits.has(bid)) {
+        buildingUnits.set(bid, []);
       }
-      buildingUnits.get(u.buildingid)!.push(u);
+      buildingUnits.get(bid)!.push(u);
     }
 
     units.forEach((unit: any) => {
-      const bUnits = buildingUnits.get(unit.buildingid) || [];
-      const lowerUnits = bUnits.filter(ou => ou.idinbuilding < unit.idinbuilding);
-      const isBottomMostEmpty = lowerUnits.every(ou => ou.type !== 0);
+      const bid = unit.topology.buildingid;
+      const idInBuilding = unit.topology.idinbuilding;
+      const type = unit.state.type;
+      const id = unit.topology.id;
 
-      if (hasPlace && unit.type === 0 && isBottomMostEmpty) {
-        validActions.push([1, unit.id]);
-      } else if (hasReplace && unit.type !== 0) {
-        validActions.push([2, unit.id]);
+      const bUnits = buildingUnits.get(bid) || [];
+      const lowerUnits = bUnits.filter(ou => ou.topology.idinbuilding < idInBuilding);
+      const isBottomMostEmpty = lowerUnits.every(ou => ou.state.type !== 0);
+
+      if (hasPlace && type === 0 && isBottomMostEmpty) {
+        validActions.push([1, id]);
+      } else if (hasReplace && type !== 0) {
+        validActions.push([2, id]);
       }
     });
   }
@@ -236,14 +245,12 @@ interface Transition {
 export interface RLTrainingMetrics {
   episode: number;
   avgLoss: number;
-  devActorLoss: number;
-  devCriticLoss: number;
-  devEntropy: number;
-  devReward: number;
-  govActorLoss: number;
-  govCriticLoss: number;
-  govEntropy: number;
-  govReward: number;
+  players: Record<string | number, {
+    actorLoss: number;
+    criticLoss: number;
+    entropy: number;
+    reward: number;
+  }>;
 }
 
 /**
@@ -257,16 +264,56 @@ export async function trainRL(
   onEpisodeEnd: (metrics: RLTrainingMetrics) => void,
   isCancelled: () => boolean
 ): Promise<void> {
-  // Force WebGL backend in TensorFlow.js for GPU acceleration
-  if (tf.getBackend() !== 'webgl') {
+  // Force WebGPU backend in TensorFlow.js for GPU acceleration, fallback to WebGL
+  if (tf.getBackend() !== 'webgpu') {
     try {
-      await tf.setBackend('webgl');
-      console.log(`[MAPPO] Switched backend to: webgl`);
+      await tf.setBackend('webgpu');
+      console.log(`[MAPPO] Switched backend to: webgpu`);
     } catch (e) {
-      console.warn(`[MAPPO] Failed to switch to backend webgl:`, e);
+      console.warn(`[MAPPO] Failed to switch to backend webgpu, trying webgl:`, e);
+      if (tf.getBackend() !== 'webgl') {
+        try {
+          await tf.setBackend('webgl');
+          console.log(`[MAPPO] Switched backend to: webgl`);
+        } catch (err) {
+          console.warn(`[MAPPO] Failed to switch to backend webgl:`, err);
+        }
+      }
     }
   }
-  const N = graph.units.length;
+
+  // Normalize graph blocks and units to match the standard tsEngine.ts JSON format
+  const normalizedGraph = {
+    blocks: graph.blocks.map(b => ({
+      topology: {
+        id: b.topology.id,
+        neighbor: b.topology.neighbor
+      },
+      state: {
+        value: b.state.value
+      }
+    })),
+    units: graph.units.map(u => ({
+      topology: {
+        id: u.topology.id,
+        blockid: u.topology.blockid,
+        buildingid: u.topology.buildingid,
+        idinbuilding: u.topology.idinbuilding
+      },
+      geometry: {
+        boundary: u.geometry.boundary,
+        height: u.geometry.height
+      },
+      state: {
+        type: u.state.type,
+        value: u.state.value,
+        population: u.state.population
+      }
+    })),
+    metadata: graph.metadata
+  };
+
+  const N = normalizedGraph.units.length;
   const inputSize = N * 7; // 7 features per unit: [is_empty, is_res, is_green, height, value, dev_potential, gov_influence]
   const outputSize = N + 1; // N slots + 1 SKIP
 
@@ -281,26 +328,15 @@ export async function trainRL(
   const clipVal = 0.2;
   const epochs = 4; // number of PPO optimization epochs per rollout
 
-  // Dynamic maxSteps: each player needs N/2 steps to potentially fill all units.
-  // Add 50% buffer for SKIP actions and exploration → ceil(N × 1.5), minimum 150.
-  const maxSteps = Math.max(150, Math.ceil(N * 1.5));
+  const maxSteps = N * 2;
 
   // Pre-compute block neighbour map once — blocks are static throughout the episode.
-  const neighborMap = buildNeighborMap(graph.blocks);
+  const neighborMap = buildNeighborMap(normalizedGraph.blocks);
 
   // Clean starting graph JSON for stateless payloads
   const startingGraphPayload = {
-    blocks: graph.blocks.map(b => ({ id: b.id, neighbor: b.neighbor, value: b.value })),
-    units: graph.units.map(u => ({
-      id: u.id,
-      blockid: u.blockid,
-      buildingid: u.buildingid,
-      idinbuilding: u.idinbuilding,
-      type: u.type,
-      height: u.height,
-      value: u.value,
-      population: u.population
-    })),
+    blocks: normalizedGraph.blocks,
+    units: normalizedGraph.units,
     metadata: { timer: 0, game_started: false }
   };
 
@@ -325,7 +361,7 @@ export async function trainRL(
     while (stepCount < maxSteps) {
       if (isCancelled()) break;
 
-      const unitsFinished = episodeState.units.every(u => u.type !== 0);
+      const unitsFinished = episodeState.units.every(u => u.state.type !== 0);
       const timerFinished = (episodeState.metadata?.timer ?? 0) >= maxSteps;
       if (unitsFinished || timerFinished) {
         finalDone = true;
@@ -347,16 +383,20 @@ export async function trainRL(
       const actorModel = activePlayer === PlayerType.DEVELOPER ? developerModel : governmentModel;
 
       // Forward pass to get action logits and state value from Centralized Critic
-      const { logits, stateValue } = tf.tidy(() => {
+      const { lTensor, vTensor } = tf.tidy(() => {
         const xs = tf.tensor2d([stateFeatures]);
         const l = actorModel.predict(xs) as tf.Tensor;
         const v = centralizedCriticModel.predict(xs) as tf.Tensor; // outputs [V_dev, V_gov]
-        const vData = v.dataSync();
-        return {
-          logits: Array.from(l.dataSync()),
-          stateValue: activePlayer === PlayerType.DEVELOPER ? vData[0] : vData[1]
-        };
+        return { lTensor: l.clone(), vTensor: v.clone() };
       });
+
+      const logitsData = await lTensor.data();
+      const vData = await vTensor.data();
+      lTensor.dispose();
+      vTensor.dispose();
+
+      const logits = Array.from(logitsData);
+      const stateValue = activePlayer === PlayerType.DEVELOPER ? vData[0] : vData[1];
 
       // Construct action mask (1 for valid, 0 for invalid)
       const mask = new Array(outputSize).fill(0);
@@ -365,7 +405,7 @@ export async function trainRL(
         const uId = action[1];
         let idx = N;
         if (aType !== 0 && uId !== null) {
-          idx = episodeState.units.findIndex(u => u.id === uId);
+          idx = episodeState.units.findIndex(u => u.topology.id === uId);
           if (idx === -1) idx = N;
         }
         mask[idx] = 1;
@@ -406,15 +446,15 @@ export async function trainRL(
         builtType
       );
 
-      const lastMetrics = episodeState.metadata.evaulate || { developer_profit: 0, government_tax: 0 };
-      const nextMetrics = nextEpisodeState.metadata.evaulate || { developer_profit: 0, government_tax: 0 };
+      const lastMetrics = episodeState.metadata.evaulate || { developer_profit: 0, government_profit: 0 };
+      const nextMetrics = nextEpisodeState.metadata.evaulate || { developer_profit: 0, government_profit: 0 };
 
       // Reward computation
       let reward = 0;
       if (activePlayer === PlayerType.DEVELOPER) { // Developer
         reward = (nextMetrics.developer_profit - lastMetrics.developer_profit) / 1000.0;
       } else { // Government
-        reward = (nextMetrics.government_tax - lastMetrics.government_tax) / 100.0;
+        reward = (nextMetrics.government_profit - lastMetrics.government_profit) / 100.0;
       }
 
       // Penalty 1: SKIP 行为惩罚 — 鼓励 Agent 积极建设而非空过 (仅用于 developer 角色)
@@ -423,14 +463,14 @@ export async function trainRL(
         reward -= 0.05;
       }
 
-      const nextUnitsFinished = nextEpisodeState.units.every(u => u.type !== 0);
+      const nextUnitsFinished = nextEpisodeState.units.every(u => u.state.type !== 0);
       const nextTimerFinished = (nextEpisodeState.metadata?.timer ?? 0) >= maxSteps;
       const done = nextUnitsFinished || nextTimerFinished;
 
       // Penalty 2: 终局惩罚 — 若因超时结束且仍有空格，按空格比例惩罚
       if (done && nextTimerFinished && !nextUnitsFinished) {
         const totalUnits = nextEpisodeState.units.length;
-        const emptyUnits = nextEpisodeState.units.filter(u => u.type === 0).length;
+        const emptyUnits = nextEpisodeState.units.filter(u => u.state.type === 0).length;
         const emptyRatio = totalUnits > 0 ? emptyUnits / totalUnits : 0;
         reward -= 0.5 * emptyRatio;
       }
@@ -471,10 +511,12 @@ export async function trainRL(
     let lastValDev = 0;
     let lastValGov = 0;
     if (!finalDone) {
-      const vData = tf.tidy(() => {
+      const vTensor = tf.tidy(() => {
         const xs = tf.tensor2d([finalStateFeatures]);
-        return (centralizedCriticModel.predict(xs) as tf.Tensor).dataSync();
+        return (centralizedCriticModel.predict(xs) as tf.Tensor).clone();
       });
+      const vData = await vTensor.data();
+      vTensor.dispose();
       lastValDev = vData[0];
       lastValGov = vData[1];
     }
@@ -564,6 +606,8 @@ export async function trainRL(
       if (devT > 0 && devStatesTensor && devActionsTensor && devOldLogProbsTensor && devAdvantagesTensor && devMasksTensor) {
         let epDevActorLoss = 0;
         let epDevEntropy = 0;
+        let devActorLossTensor: tf.Tensor | null = null;
+        let devEntropyTensor: tf.Tensor | null = null;
         const lossTensor = devOptimizer.minimize(() => {
           const logits = developerModel.predict(devStatesTensor!) as tf.Tensor;
           const maskedLogits = tf.where(devMasksTensor!.greater(0), logits, tf.fill(logits.shape, -1e9));
@@ -577,11 +621,19 @@ export async function trainRL(
           const entropy = tf.mean(tf.sum(probs.mul(tf.log(probs.add(1e-8))).neg(), 1));
           const loss = actorLoss.sub(entropy.mul(0.01));
 
-          epDevActorLoss = actorLoss.dataSync()[0];
-          epDevEntropy = entropy.dataSync()[0];
+          devActorLossTensor = tf.keep(actorLoss.clone());
+          devEntropyTensor = tf.keep(entropy.clone());
           return loss as tf.Scalar;
         }, true, developerModel.trainableWeights.map((w: any) => w.val));
         if (lossTensor) {
+          if (devActorLossTensor) {
+            epDevActorLoss = (await (devActorLossTensor as tf.Tensor).data())[0];
+            (devActorLossTensor as tf.Tensor).dispose();
+          }
+          if (devEntropyTensor) {
+            epDevEntropy = (await (devEntropyTensor as tf.Tensor).data())[0];
+            (devEntropyTensor as tf.Tensor).dispose();
+          }
           totalEpochDevActorLoss += epDevActorLoss;
           totalEpochDevEntropy += epDevEntropy;
           lossTensor.dispose();
@@ -592,6 +644,8 @@ export async function trainRL(
       if (govT > 0 && govStatesTensor && govActionsTensor && govOldLogProbsTensor && govAdvantagesTensor && govMasksTensor) {
         let epGovActorLoss = 0;
         let epGovEntropy = 0;
+        let govActorLossTensor: tf.Tensor | null = null;
+        let govEntropyTensor: tf.Tensor | null = null;
         const lossTensor = govOptimizer.minimize(() => {
           const logits = governmentModel.predict(govStatesTensor!) as tf.Tensor;
           const maskedLogits = tf.where(govMasksTensor!.greater(0), logits, tf.fill(logits.shape, -1e9));
@@ -605,11 +659,19 @@ export async function trainRL(
           const entropy = tf.mean(tf.sum(probs.mul(tf.log(probs.add(1e-8))).neg(), 1));
           const loss = actorLoss.sub(entropy.mul(0.01));
 
-          epGovActorLoss = actorLoss.dataSync()[0];
-          epGovEntropy = entropy.dataSync()[0];
+          govActorLossTensor = tf.keep(actorLoss.clone());
+          govEntropyTensor = tf.keep(entropy.clone());
           return loss as tf.Scalar;
         }, true, governmentModel.trainableWeights.map((w: any) => w.val));
         if (lossTensor) {
+          if (govActorLossTensor) {
+            epGovActorLoss = (await (govActorLossTensor as tf.Tensor).data())[0];
+            (govActorLossTensor as tf.Tensor).dispose();
+          }
+          if (govEntropyTensor) {
+            epGovEntropy = (await (govEntropyTensor as tf.Tensor).data())[0];
+            (govEntropyTensor as tf.Tensor).dispose();
+          }
           totalEpochGovActorLoss += epGovActorLoss;
           totalEpochGovEntropy += epGovEntropy;
           lossTensor.dispose();
@@ -619,28 +681,43 @@ export async function trainRL(
       // 3. Optimize Centralized Critic network
       let epDevCriticLoss = 0;
       let epGovCriticLoss = 0;
-      const cLossTensor = criticOptimizer.minimize(() => {
-        let loss = tf.scalar(0);
-        if (devT > 0 && devStatesTensor && devReturnsTensor) {
-          const devPreds = centralizedCriticModel.predict(devStatesTensor!) as tf.Tensor;
-          const devPredValues = tf.slice(devPreds, [0, 0], [-1, 1]); // index 0 is Developer
-          const cLoss = tf.losses.meanSquaredError(devReturnsTensor!, devPredValues);
-          epDevCriticLoss = cLoss.dataSync()[0];
-          loss = loss.add(cLoss);
+      if (devT > 0 || govT > 0) {
+        let devCLossTensor: tf.Tensor | null = null;
+        let govCLossTensor: tf.Tensor | null = null;
+        const cLossTensor = criticOptimizer.minimize(() => {
+          let loss: tf.Tensor = tf.scalar(0);
+          let hasLoss = false;
+          if (devT > 0 && devStatesTensor && devReturnsTensor) {
+            const devPreds = centralizedCriticModel.apply(devStatesTensor!, { training: true }) as tf.Tensor;
+            const devPredValues = tf.slice(devPreds, [0, 0], [-1, 1]); // index 0 is Developer
+            const cLoss = tf.losses.meanSquaredError(devReturnsTensor!, devPredValues);
+            devCLossTensor = tf.keep(cLoss.clone());
+            loss = loss.add(cLoss);
+            hasLoss = true;
+          }
+          if (govT > 0 && govStatesTensor && govReturnsTensor) {
+            const govPreds = centralizedCriticModel.apply(govStatesTensor!, { training: true }) as tf.Tensor;
+            const govPredValues = tf.slice(govPreds, [0, 1], [-1, 1]); // index 1 is Government
+            const cLoss = tf.losses.meanSquaredError(govReturnsTensor!, govPredValues);
+            govCLossTensor = tf.keep(cLoss.clone());
+            loss = loss.add(cLoss);
+            hasLoss = true;
+          }
+          return hasLoss ? (loss as tf.Scalar) : tf.scalar(0).add(tf.sum(centralizedCriticModel.trainableWeights[0].read()).mul(0.0)) as tf.Scalar;
+        }, true, centralizedCriticModel.trainableWeights.map((w: any) => w.val));
+        if (cLossTensor) {
+          if (devCLossTensor) {
+            epDevCriticLoss = (await (devCLossTensor as tf.Tensor).data())[0];
+            (devCLossTensor as tf.Tensor).dispose();
+          }
+          if (govCLossTensor) {
+            epGovCriticLoss = (await (govCLossTensor as tf.Tensor).data())[0];
+            (govCLossTensor as tf.Tensor).dispose();
+          }
+          totalEpochDevCriticLoss += epDevCriticLoss;
+          totalEpochGovCriticLoss += epGovCriticLoss;
+          cLossTensor.dispose();
         }
-        if (govT > 0 && govStatesTensor && govReturnsTensor) {
-          const govPreds = centralizedCriticModel.predict(govStatesTensor!) as tf.Tensor;
-          const govPredValues = tf.slice(govPreds, [0, 1], [-1, 1]); // index 1 is Government
-          const cLoss = tf.losses.meanSquaredError(govReturnsTensor!, govPredValues);
-          epGovCriticLoss = cLoss.dataSync()[0];
-          loss = loss.add(cLoss);
-        }
-        return loss as tf.Scalar;
-      }, true, centralizedCriticModel.trainableWeights.map((w: any) => w.val));
-      if (cLossTensor) {
-        totalEpochDevCriticLoss += epDevCriticLoss;
-        totalEpochGovCriticLoss += epGovCriticLoss;
-        cLossTensor.dispose();
       }
     }
 
@@ -675,14 +752,20 @@ export async function trainRL(
       onEpisodeEnd({
         episode: ep + 1,
         avgLoss,
-        devActorLoss: devMetrics.actorLoss,
-        devCriticLoss,
-        devEntropy: devMetrics.entropy,
-        devReward,
-        govActorLoss: govMetrics.actorLoss,
-        govCriticLoss,
-        govEntropy: govMetrics.entropy,
-        govReward
+        players: {
+          [PlayerType.DEVELOPER]: {
+            actorLoss: devMetrics.actorLoss,
+            criticLoss: devCriticLoss,
+            entropy: devMetrics.entropy,
+            reward: devReward
+          },
+          [PlayerType.GOVERNMENT]: {
+            actorLoss: govMetrics.actorLoss,
+            criticLoss: govCriticLoss,
+            entropy: govMetrics.entropy,
+            reward: govReward
+          }
+        }
       });
     }
 
@@ -711,15 +794,46 @@ export function getRLActionRecommendation(
     return null;
   }
 
-  const neighborMap = buildNeighborMap(graph.blocks ?? []);
-  const stateFeatures = encodeGraphState(graph, neighborMap);
+  // Normalize graph blocks and units to match the standard tsEngine.ts JSON format
+  const normalizedGraph = {
+    blocks: graph.blocks.map(b => ({
+      topology: {
+        id: b.topology.id,
+        neighbor: b.topology.neighbor
+      },
+      state: {
+        value: b.state.value
+      }
+    })),
+    units: graph.units.map(u => ({
+      topology: {
+        id: u.topology.id,
+        blockid: u.topology.blockid,
+        buildingid: u.topology.buildingid,
+        idinbuilding: u.topology.idinbuilding
+      },
+      geometry: {
+        boundary: u.geometry.boundary,
+        height: u.geometry.height
+      },
+      state: {
+        type: u.state.type,
+        value: u.state.value,
+        population: u.state.population
+      }
+    })),
+    metadata: graph.metadata
+  };
+
+  const neighborMap = buildNeighborMap(normalizedGraph.blocks);
+  const stateFeatures = encodeGraphState(normalizedGraph, neighborMap);
   const logits = tf.tidy(() => {
     const xs = tf.tensor2d([stateFeatures]);
     const ys = model.predict(xs) as tf.Tensor;
     return Array.from(ys.dataSync());
   });
 
-  const N = graph.units.length;
+  const N = normalizedGraph.units.length;
   let bestAction: (number | null)[] | null = null;
   let maxLogit = -Infinity;
 
@@ -729,7 +843,7 @@ export function getRLActionRecommendation(
 
     let actionIdx = N;
     if (actionType !== 0 && unitId !== null) {
-      actionIdx = graph.units.findIndex(u => u.id === unitId);
+      actionIdx = normalizedGraph.units.findIndex(u => u.topology.id === unitId);
       if (actionIdx === -1) actionIdx = N;
     }
 
