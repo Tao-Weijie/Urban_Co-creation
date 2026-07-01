@@ -128,6 +128,7 @@ export class UrbanGraph {
     player_order: PlayerType[];
     game_started: boolean;
     blockValues: Map<number, number>;
+    initialBlockValues: Map<number, number>;
 
     constructor(blocks: number[], neighbor: number[][], units: UrbanUnit[], player_order: PlayerType[], game_started: boolean, timer: number = 0) {
         this.blocks = blocks;
@@ -137,6 +138,7 @@ export class UrbanGraph {
         this.player_order = player_order;
         this.game_started = game_started;
         this.blockValues = new Map<number, number>();
+        this.initialBlockValues = new Map<number, number>();
     }
 
     getNeighbors(blockId: number): number[] {
@@ -160,7 +162,9 @@ export class UrbanGraph {
 
         const graph = new UrbanGraph(blocks, neighbor, units, player_order, game_started, timer);
         blocksData.forEach((b: any) => {
-            graph.blockValues.set(Number(b.topology.id), b.state.value ?? 30.0);
+            const initVal = b.state.value ?? 30.0;
+            graph.blockValues.set(Number(b.topology.id), initVal);
+            graph.initialBlockValues.set(Number(b.topology.id), initVal);
         });
         return graph;
     }
@@ -356,7 +360,8 @@ export class GameEngine {
             const value_green = 40.0 * Math.sqrt(total_green_units) + 20.0 * Math.sqrt(neighbor_green_units);
             const value_penalty = 6.0 * total_residential_units + 3.0 * neighbor_res_units;
 
-            const blockVal = Math.max(15.0, Math.min(100.0, 30.0 + value_green - value_penalty));
+            const baseVal = graph.initialBlockValues.get(blockId) ?? 30.0;
+            const blockVal = Math.min(100.0, baseVal + value_green - value_penalty);
             graph.blockValues.set(blockId, blockVal);
         }
     }

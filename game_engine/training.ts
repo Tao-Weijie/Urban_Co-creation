@@ -118,7 +118,7 @@ export function encodeGraphStateGNN(
     const u = units[i];
     const uid = Number(u.topology.id);
     const bid = Number(u.topology.blockid);
-    
+
     // 从已经缓存好的映射中快速直接读取原始地价 v
     const v = baseGraph.blockValues.get(bid) ?? 30;
 
@@ -133,16 +133,16 @@ export function encodeGraphStateGNN(
       // 1. 原地模拟在此位置放置住宅的大盘开发商利润增量
       targetUnit.type = UnitType.RESIDENTIAL;
       const resDevProfit = GameEngine.evaluate_developer_profit(baseGraph);
-      
+
       targetUnit.type = UnitType.EMPTY;
       const emptyDevProfit = GameEngine.evaluate_developer_profit(baseGraph);
-      
+
       devGain = Math.max(0, resDevProfit - emptyDevProfit);
 
       // 2. 原地模拟在此位置放置绿地的大盘政府收益增量
       targetUnit.type = UnitType.GREEN;
       const resGovProfit = GameEngine.evaluate_government_profit(baseGraph);
-      
+
       govGain = Math.max(0, resGovProfit - emptyDevProfit); // 使用相同的 empty 基准进行相减
 
       // 原地复原单元的真实状态，保证大盘数据状态一致
@@ -1034,10 +1034,10 @@ export async function loadRLModelFromSingleFile(jsonFile: File): Promise<void> {
   const featuresInput = tf.input({ shape: [null, inFeatures], name: 'node_features' });
   const adjInput = tf.input({ shape: [null, null], name: 'adjacency_matrix' });
 
-  const dense1 = tf.layers.dense({ units: GNN_HIDDEN_1, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
-  const dense2 = tf.layers.dense({ units: GNN_HIDDEN_2, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
+  const gcn1 = new GCNLayer({ units: GNN_HIDDEN_1 }).apply([featuresInput, adjInput]) as tf.SymbolicTensor;
+  const gcn2 = new GCNLayer({ units: GNN_HIDDEN_2 }).apply([gcn1, adjInput]) as tf.SymbolicTensor;
 
-  const pooled = tf.layers.globalAveragePooling1d({}).apply(dense2) as tf.SymbolicTensor;
+  const pooled = tf.layers.globalAveragePooling1d({}).apply(gcn2) as tf.SymbolicTensor;
   const dense = tf.layers.dense({ units: CRITIC_DENSE, activation: 'relu' }).apply(pooled) as tf.SymbolicTensor;
   const output = tf.layers.dense({ units: 2 }).apply(dense) as tf.SymbolicTensor;
 

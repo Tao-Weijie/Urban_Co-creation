@@ -136,13 +136,13 @@ export function createActorModel(inFeatures: number): tf.LayersModel {
   const featuresInput = tf.input({ shape: [null, inFeatures], name: 'node_features' });
   const adjInput = tf.input({ shape: [null, null], name: 'adjacency_matrix' });
 
-  const dense1 = tf.layers.dense({ units: GNN_HIDDEN_1, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
-  const dense2 = tf.layers.dense({ units: GNN_HIDDEN_2, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
+  const gcn1 = new GCNLayer({ units: GNN_HIDDEN_1 }).apply([featuresInput, adjInput]) as tf.SymbolicTensor;
+  const gcn2 = new GCNLayer({ units: GNN_HIDDEN_2 }).apply([gcn1, adjInput]) as tf.SymbolicTensor;
 
-  const nodeLogits = tf.layers.dense({ units: buildableTypes.length }).apply(dense2) as tf.SymbolicTensor;
+  const nodeLogits = tf.layers.dense({ units: buildableTypes.length }).apply(gcn2) as tf.SymbolicTensor;
   const reshapedNodeLogits = tf.layers.reshape({ targetShape: [-1] }).apply(nodeLogits) as tf.SymbolicTensor;
 
-  const pooled = tf.layers.globalAveragePooling1d({}).apply(dense2) as tf.SymbolicTensor;
+  const pooled = tf.layers.globalAveragePooling1d({}).apply(gcn2) as tf.SymbolicTensor;
   const skipLogit = tf.layers.dense({ units: 1 }).apply(pooled) as tf.SymbolicTensor;
 
   const output = tf.layers.concatenate({ axis: 1 }).apply([reshapedNodeLogits, skipLogit]) as tf.SymbolicTensor;
@@ -157,10 +157,10 @@ export function createCriticModel(inFeatures: number): tf.LayersModel {
   const featuresInput = tf.input({ shape: [null, inFeatures], name: 'node_features' });
   const adjInput = tf.input({ shape: [null, null], name: 'adjacency_matrix' });
 
-  const dense1 = tf.layers.dense({ units: GNN_HIDDEN_1, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
-  const dense2 = tf.layers.dense({ units: GNN_HIDDEN_2, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
+  const gcn1 = new GCNLayer({ units: GNN_HIDDEN_1 }).apply([featuresInput, adjInput]) as tf.SymbolicTensor;
+  const gcn2 = new GCNLayer({ units: GNN_HIDDEN_2 }).apply([gcn1, adjInput]) as tf.SymbolicTensor;
 
-  const pooled = tf.layers.globalAveragePooling1d({}).apply(dense2) as tf.SymbolicTensor;
+  const pooled = tf.layers.globalAveragePooling1d({}).apply(gcn2) as tf.SymbolicTensor;
   const dense = tf.layers.dense({ units: CRITIC_DENSE, activation: 'relu' }).apply(pooled) as tf.SymbolicTensor;
   const output = tf.layers.dense({ units: 2 }).apply(dense) as tf.SymbolicTensor;
 
