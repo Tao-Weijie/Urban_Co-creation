@@ -992,8 +992,8 @@ export async function loadRLModelFromSingleFile(jsonFile: File): Promise<void> {
   // Re-initialize Centralized Critic network
   const featuresInput = tf.input({ shape: [inputSize], name: 'state_features' });
 
-  const dense1 = tf.layers.dense({ units: 256, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
-  const dense2 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
+  const dense1 = tf.layers.dense({ units: 64, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
+  const dense2 = tf.layers.dense({ units: 32, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
   const output = tf.layers.dense({ units: 2 }).apply(dense2) as tf.SymbolicTensor;
 
   setCentralizedCriticModel(tf.model({ inputs: featuresInput, outputs: output }));

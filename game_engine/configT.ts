@@ -80,8 +80,8 @@ export let centralizedCriticModel: tf.LayersModel | null = null;
 export function createActorModel(inputSize: number, outputSize: number): tf.LayersModel {
   const featuresInput = tf.input({ shape: [inputSize], name: 'state_features' });
 
-  const dense1 = tf.layers.dense({ units: 256, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
-  const dense2 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
+  const dense1 = tf.layers.dense({ units: 64, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
+  const dense2 = tf.layers.dense({ units: 32, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
   const output = tf.layers.dense({ units: outputSize }).apply(dense2) as tf.SymbolicTensor;
 
   return tf.model({ inputs: featuresInput, outputs: output });
@@ -93,8 +93,8 @@ export function createActorModel(inputSize: number, outputSize: number): tf.Laye
 export function createCriticModel(inputSize: number): tf.LayersModel {
   const featuresInput = tf.input({ shape: [inputSize], name: 'state_features' });
 
-  const dense1 = tf.layers.dense({ units: 256, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
-  const dense2 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
+  const dense1 = tf.layers.dense({ units: 64, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
+  const dense2 = tf.layers.dense({ units: 32, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
   const output = tf.layers.dense({ units: 2 }).apply(dense2) as tf.SymbolicTensor;
 
   return tf.model({ inputs: featuresInput, outputs: output });
