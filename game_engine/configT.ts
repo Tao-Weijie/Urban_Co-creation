@@ -8,11 +8,8 @@ export const DEFAULT_EPISODES = 100;
 export const DEFAULT_LEARNING_RATE = 0.001;
 export const UI_UPDATE_INTERVAL = 5;
 
-// GNN 神经网络参数
+// 神经网络及特征维度参数
 export const GNN_INPUT_FEATURES = 8;
-export const GNN_HIDDEN_1 = 64;
-export const GNN_HIDDEN_2 = 32;
-export const CRITIC_DENSE = 16;
 
 // 特征向量编码中的常数
 export const FEATURE_NORM_ID = 10.0;
@@ -65,58 +62,6 @@ export function setFeature(
     normGovGain,                        // [8] 政府相对公共收益贡献
   ];
 }
-
-/**
- * 自定义图卷积网络层 (GCN Layer)
- */
-export class GCNLayer extends tf.layers.Layer {
-  static className = 'GCNLayer';
-  private units: number;
-  private kernel!: tf.LayerVariable;
-  private bias!: tf.LayerVariable;
-
-  constructor(config: any) {
-    super(config);
-    this.units = config.units;
-  }
-
-  build(inputShape: any) {
-    const inFeatures = inputShape[0][2];
-    this.kernel = this.addWeight(
-      'kernel',
-      [1, inFeatures, this.units],
-      'float32',
-      tf.initializers.glorotNormal({})
-    );
-    this.bias = this.addWeight(
-      'bias',
-      [this.units],
-      'float32',
-      tf.initializers.zeros()
-    );
-  }
-
-  computeOutputShape(inputShape: any): any {
-    return [inputShape[0][0], inputShape[0][1], this.units];
-  }
-
-  call(inputs: tf.Tensor[]) {
-    return tf.tidy(() => {
-      const nodeFeatures = inputs[0] as tf.Tensor3D;
-      const normalizedAdj = inputs[1] as tf.Tensor3D;
-      const projection = tf.conv1d(nodeFeatures, this.kernel.read() as tf.Tensor3D, 1, 'same');
-      const aggregated = tf.matMul(normalizedAdj, projection);
-      return tf.relu(tf.add(aggregated, this.bias.read()));
-    });
-  }
-
-  getConfig() {
-    const config = super.getConfig();
-    Object.assign(config, { units: this.units });
-    return config;
-  }
-}
-tf.serialization.registerClass(GCNLayer);
 
 // 动态计算出所有合法的可建造 UnitType 列表
 export const buildableTypes = Array.from(

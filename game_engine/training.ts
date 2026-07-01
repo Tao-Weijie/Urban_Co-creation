@@ -4,9 +4,6 @@ import { tsEngine, UrbanGraph, GameEngine } from './engine';
 import { PlayerType, PlayerConfig, UnitType } from './configE';
 import {
   GNN_INPUT_FEATURES,
-  GNN_HIDDEN_1,
-  GNN_HIDDEN_2,
-  CRITIC_DENSE,
   PPO_GAMMA,
   PPO_CLIP_VAL,
   PPO_EPOCHS,
@@ -44,17 +41,6 @@ export interface TopologyData {
 }
 
 
-export function buildNeighborMap(blocks: any[]): Map<number, number[]> {
-  const map = new Map<number, number[]>();
-  for (const b of blocks) {
-    map.set(Number(b.topology.id), (b.topology.neighbor || []).map(Number));
-  }
-  return map;
-}
-
-/**
- * 辅助映射：将 [动作类型, 单元ID, 目标建造类型] 转化为神经网络的输出索引 Index (N * K + 1 空间)
- */
 export function actionToId(
   action: [number, number | null, number | null],
   units: any[]
@@ -75,9 +61,6 @@ export function actionToId(
   return unitIndex * K + typeIndex;
 }
 
-/**
- * 辅助映射：将神经网络的输出索引 Index 还原为动作三元组 [动作类型, 单元ID, 目标建造类型]
- */
 export function idToAction(
   actionIndex: number,
   units: any[]
@@ -99,13 +82,9 @@ export function idToAction(
   return [actionType, unitId, targetUnitType];
 }
 
-/**
- * Encodes the graph state into node features [N, 7] and normalized adjacency matrix [N, N].
- */
-export function encodeGraphStateGNN(
-  graph: TopologyData,
-  neighborMap: Map<number, number[]>
-): { nodeFeatures: number[][]; normalizedAdj: number[][] } {
+export function encodeGraphState(
+  graph: TopologyData
+): number[][] {
   const units = graph.units;
   const N = units.length;
   const baseGraph = UrbanGraph.fromJson(graph);
@@ -152,40 +131,7 @@ export function encodeGraphStateGNN(
     nodeFeatures.push(row);
   }
 
-  const adj: number[][] = Array.from({ length: N }, () => Array(N).fill(0));
-  const degrees = new Array(N).fill(0);
-
-  for (let i = 0; i < N; i++) {
-    adj[i][i] = 1.0;
-    const uid = units[i].topology.id;
-    const neighbors = neighborMap.get(uid) ?? [];
-    for (const nVal of neighbors) {
-      const j = units.findIndex(u => u.topology.id === nVal);
-      if (j !== -1) {
-        adj[i][j] = 1.0;
-      }
-    }
-  }
-
-  for (let i = 0; i < N; i++) {
-    let deg = 0;
-    for (let j = 0; j < N; j++) {
-      if (adj[i][j] > 0) deg++;
-    }
-    degrees[i] = deg;
-  }
-
-  const normalizedAdj: number[][] = Array.from({ length: N }, () => Array(N).fill(0));
-  for (let i = 0; i < N; i++) {
-    for (let j = 0; j < N; j++) {
-      if (adj[i][j] > 0) {
-        const degProd = degrees[i] * degrees[j];
-        normalizedAdj[i][j] = degProd > 0 ? adj[i][j] / Math.sqrt(degProd) : 0;
-      }
-    }
-  }
-
-  return { nodeFeatures, normalizedAdj };
+  return nodeFeatures;
 }
 
 /**
@@ -338,9 +284,6 @@ export async function trainRL(
     metadata: graph.metadata
   };
 
-  // Pre-compute block neighbour map once — blocks are static throughout the episode.
-  const neighborMap = buildNeighborMap(normalizedGraph.blocks);
-
   const N = normalizedGraph.units.length;
   const inputSize = N * GNN_INPUT_FEATURES;
   const outputSize = (N * buildableTypes.length) + 1; // N slots * K unitTypes + 1 SKIP
@@ -381,8 +324,7 @@ export async function trainRL(
     });
     let stepCount = 0;
 
-    let finalGNN = encodeGraphStateGNN(episodeState, neighborMap);
-    let finalStateFeatures = finalGNN.nodeFeatures.flat();
+    let finalStateFeatures = encodeGraphState(episodeState).flat();
     let finalDone = false;
 
     // On-policy rollout collection loop
@@ -402,8 +344,7 @@ export async function trainRL(
         break;
       }
 
-      const gnnOut = encodeGraphStateGNN(episodeState, neighborMap);
-      const stateFeatures = gnnOut.nodeFeatures.flat();
+      const stateFeatures = encodeGraphState(episodeState).flat();
       const activePlayer = episodeState.metadata.next_player ?? PlayerType.DEVELOPER;
       if (activePlayer !== PlayerType.DEVELOPER && activePlayer !== PlayerType.GOVERNMENT) {
         throw new TypeError(`Invalid PlayerType value: ${activePlayer}`);
@@ -524,8 +465,7 @@ export async function trainRL(
       }
 
       episodeState = nextEpisodeState;
-      const gnnIn = encodeGraphStateGNN(episodeState, neighborMap);
-      finalStateFeatures = gnnIn.nodeFeatures.flat();
+      finalStateFeatures = encodeGraphState(episodeState).flat();
       finalDone = done;
       stepCount++;
     }
@@ -857,9 +797,7 @@ export function getRLActionRecommendation(
     metadata: graph.metadata
   };
 
-  const neighborMap = buildNeighborMap(normalizedGraph.blocks);
-  const gnnOut = encodeGraphStateGNN(normalizedGraph, neighborMap);
-  const stateFeatures = gnnOut.nodeFeatures.flat();
+  const stateFeatures = encodeGraphState(normalizedGraph).flat();
   const logits = tf.tidy(() => {
     const xs = tf.tensor2d([stateFeatures]);
     const ys = model.predict(xs) as tf.Tensor;
