@@ -207,7 +207,7 @@ export async function trainRL(
   // 动态切换指定后端：gpu 使用 WebGPU -> WebGL；cpu 使用 WASM (多核) -> 原生 CPU (单核)
   if (backendOption === 'cpu') {
     try {
-      setWasmPaths('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm/dist/');
+      setWasmPaths('/');
       tf.env().set('WASM_HAS_MULTITHREAD_SUPPORT', true);
       tf.env().set('WASM_HAS_SIMD_SUPPORT', true);
       await tf.setBackend('wasm');
