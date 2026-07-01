@@ -468,6 +468,9 @@ export async function trainRL(
       finalStateFeatures = encodeGraphState(episodeState).flat();
       finalDone = done;
       stepCount++;
+
+      // 主动释放 CPU 主线程控制权，防止在大图计算下浏览器 UI 卡顿死锁
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
 
     if (isCancelled()) break;

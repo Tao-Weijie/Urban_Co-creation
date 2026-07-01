@@ -6,7 +6,7 @@
 // 与前端 UI 交互的默认训练参数
 export const DEFAULT_EPISODES = 100;
 export const DEFAULT_LEARNING_RATE = 0.001;
-export const UI_UPDATE_INTERVAL = 5;
+export const UI_UPDATE_INTERVAL = 1;
 
 // 神经网络及特征维度参数
 export const GNN_INPUT_FEATURES = 8;
