@@ -14,7 +14,6 @@ import {
   PLACE_INCENTIVE,
   SKIP_PENALTY,
   setFeature,
-  GCNLayer,
   actorModels,
   centralizedCriticModel,
   initOrGetRLModels,
@@ -259,8 +258,7 @@ function getValidActions(state: TopologyData): [number, number | null, number | 
 }
 
 interface Transition {
-  nodeFeatures: number[][];
-  normalizedAdj: number[][];
+  stateFeatures: number[];
   actionIdx: number;
   oldLogProb: number;
   reward: number;
@@ -344,10 +342,10 @@ export async function trainRL(
   const neighborMap = buildNeighborMap(normalizedGraph.blocks);
 
   const N = normalizedGraph.units.length;
-  const inFeatures = GNN_INPUT_FEATURES;
+  const inputSize = N * GNN_INPUT_FEATURES;
   const outputSize = (N * buildableTypes.length) + 1; // N slots * K unitTypes + 1 SKIP
 
-  const { actors, centralizedCriticModel } = initOrGetRLModels(inFeatures);
+  const { actors, centralizedCriticModel } = initOrGetRLModels(inputSize, outputSize);
   const developerModel = actors.get(PlayerType.DEVELOPER)!;
   const governmentModel = actors.get(PlayerType.GOVERNMENT)!;
 
@@ -384,8 +382,7 @@ export async function trainRL(
     let stepCount = 0;
 
     let finalGNN = encodeGraphStateGNN(episodeState, neighborMap);
-    let finalNodeFeatures = finalGNN.nodeFeatures;
-    let finalNormalizedAdj = finalGNN.normalizedAdj;
+    let finalStateFeatures = finalGNN.nodeFeatures.flat();
     let finalDone = false;
 
     // On-policy rollout collection loop
@@ -405,7 +402,8 @@ export async function trainRL(
         break;
       }
 
-      const { nodeFeatures, normalizedAdj } = encodeGraphStateGNN(episodeState, neighborMap);
+      const gnnOut = encodeGraphStateGNN(episodeState, neighborMap);
+      const stateFeatures = gnnOut.nodeFeatures.flat();
       const activePlayer = episodeState.metadata.next_player ?? PlayerType.DEVELOPER;
       if (activePlayer !== PlayerType.DEVELOPER && activePlayer !== PlayerType.GOVERNMENT) {
         throw new TypeError(`Invalid PlayerType value: ${activePlayer}`);
@@ -413,12 +411,11 @@ export async function trainRL(
 
       const actorModel = activePlayer === PlayerType.DEVELOPER ? developerModel : governmentModel;
 
-      // Forward pass to get action logits and state value from Centralized Critic
+      // Forward pass to get action logits and state value from Centralized Critic (1D Flat MLP style)
       const { lTensor, vTensor } = tf.tidy(() => {
-        const xs = tf.tensor3d([nodeFeatures]);
-        const adj = tf.tensor3d([normalizedAdj]);
-        const l = actorModel.predict([xs, adj]) as tf.Tensor;
-        const v = centralizedCriticModel.predict([xs, adj]) as tf.Tensor; // outputs [V_dev, V_gov]
+        const xs = tf.tensor2d([stateFeatures]);
+        const l = actorModel.predict(xs) as tf.Tensor;
+        const v = centralizedCriticModel.predict(xs) as tf.Tensor; // outputs [V_dev, V_gov]
         return { lTensor: l.clone(), vTensor: v.clone() };
       });
 
@@ -503,16 +500,15 @@ export async function trainRL(
 
       // Penalty 2: 终局惩罚 — 若因超时结束且仍有空格，按空格比例惩罚
       if (done && nextTimerFinished && !nextUnitsFinished) {
-        const totalUnits = nextEpisodeState.units.length;
-        const emptyUnits = nextEpisodeState.units.filter(u => u.state.type === 0).length;
-        const emptyRatio = totalUnits > 0 ? emptyUnits / totalUnits : 0;
-        reward -= 0.5 * emptyRatio;
+         const totalUnits = nextEpisodeState.units.length;
+         const emptyUnits = nextEpisodeState.units.filter(u => u.state.type === 0).length;
+         const emptyRatio = totalUnits > 0 ? emptyUnits / totalUnits : 0;
+         reward -= 0.5 * emptyRatio;
       }
 
       // Record step transition
       const transition: Transition = {
-        nodeFeatures,
-        normalizedAdj,
+        stateFeatures,
         actionIdx,
         oldLogProb,
         reward,
@@ -529,8 +525,7 @@ export async function trainRL(
 
       episodeState = nextEpisodeState;
       const gnnIn = encodeGraphStateGNN(episodeState, neighborMap);
-      finalNodeFeatures = gnnIn.nodeFeatures;
-      finalNormalizedAdj = gnnIn.normalizedAdj;
+      finalStateFeatures = gnnIn.nodeFeatures.flat();
       finalDone = done;
       stepCount++;
     }
@@ -549,9 +544,8 @@ export async function trainRL(
     let lastValGov = 0;
     if (!finalDone) {
       const vTensor = tf.tidy(() => {
-        const xs = tf.tensor3d([finalNodeFeatures]);
-        const adj = tf.tensor3d([finalNormalizedAdj]);
-        return (centralizedCriticModel.predict([xs, adj]) as tf.Tensor).clone();
+        const xs = tf.tensor2d([finalStateFeatures]);
+        return (centralizedCriticModel.predict(xs) as tf.Tensor).clone();
       });
       const vData = await vTensor.data();
       vTensor.dispose();
@@ -600,8 +594,7 @@ export async function trainRL(
     }
 
     // Pre-create tensors outside the epoch optimization loop to avoid memory leaks/re-creation overhead
-    let devStatesTensor: tf.Tensor3D | null = null;
-    let devAdjTensor: tf.Tensor3D | null = null;
+    let devStatesTensor: tf.Tensor2D | null = null;
     let devActionsTensor: tf.Tensor1D | null = null;
     let devOldLogProbsTensor: tf.Tensor1D | null = null;
     let devReturnsTensor: tf.Tensor2D | null = null;
@@ -609,8 +602,7 @@ export async function trainRL(
     let devMasksTensor: tf.Tensor2D | null = null;
 
     if (devT > 0) {
-      devStatesTensor = tf.tensor3d(developerBuffer.map(t => t.nodeFeatures));
-      devAdjTensor = tf.tensor3d(developerBuffer.map(t => t.normalizedAdj));
+      devStatesTensor = tf.tensor2d(developerBuffer.map(t => t.stateFeatures));
       devActionsTensor = tf.tensor1d(developerBuffer.map(t => t.actionIdx), 'int32');
       devOldLogProbsTensor = tf.tensor1d(developerBuffer.map(t => t.oldLogProb));
       devReturnsTensor = tf.tensor2d(devReturns);
@@ -618,8 +610,7 @@ export async function trainRL(
       devMasksTensor = tf.tensor2d(developerBuffer.map(t => t.mask));
     }
 
-    let govStatesTensor: tf.Tensor3D | null = null;
-    let govAdjTensor: tf.Tensor3D | null = null;
+    let govStatesTensor: tf.Tensor2D | null = null;
     let govActionsTensor: tf.Tensor1D | null = null;
     let govOldLogProbsTensor: tf.Tensor1D | null = null;
     let govReturnsTensor: tf.Tensor2D | null = null;
@@ -627,8 +618,7 @@ export async function trainRL(
     let govMasksTensor: tf.Tensor2D | null = null;
 
     if (govT > 0) {
-      govStatesTensor = tf.tensor3d(governmentBuffer.map(t => t.nodeFeatures));
-      govAdjTensor = tf.tensor3d(governmentBuffer.map(t => t.normalizedAdj));
+      govStatesTensor = tf.tensor2d(governmentBuffer.map(t => t.stateFeatures));
       govActionsTensor = tf.tensor1d(governmentBuffer.map(t => t.actionIdx), 'int32');
       govOldLogProbsTensor = tf.tensor1d(governmentBuffer.map(t => t.oldLogProb));
       govReturnsTensor = tf.tensor2d(govReturns);
@@ -645,13 +635,13 @@ export async function trainRL(
 
     for (let epoch = 0; epoch < epochs; epoch++) {
       // 1. Optimize Developer Actor (Policy network)
-      if (devT > 0 && devStatesTensor && devAdjTensor && devActionsTensor && devOldLogProbsTensor && devAdvantagesTensor && devMasksTensor) {
+      if (devT > 0 && devStatesTensor && devActionsTensor && devOldLogProbsTensor && devAdvantagesTensor && devMasksTensor) {
         let epDevActorLoss = 0;
         let epDevEntropy = 0;
         let devActorLossTensor: tf.Tensor | null = null;
         let devEntropyTensor: tf.Tensor | null = null;
         const lossTensor = devOptimizer.minimize(() => {
-          const logits = developerModel.predict([devStatesTensor!, devAdjTensor!]) as tf.Tensor;
+          const logits = developerModel.predict(devStatesTensor!) as tf.Tensor;
           const maskedLogits = tf.where(devMasksTensor!.greater(0), logits, tf.fill(logits.shape, -1e9));
           const probs = tf.softmax(maskedLogits);
           const newProbs = tf.sum(probs.mul(tf.oneHot(devActionsTensor!, outputSize)), 1);
@@ -662,7 +652,7 @@ export async function trainRL(
           const actorLoss = tf.mean(tf.minimum(surr1, surr2)).neg();
           const entropy = tf.mean(tf.sum(probs.mul(tf.log(probs.add(1e-8))).neg(), 1));
           const loss = actorLoss.sub(entropy.mul(0.01));
-
+ 
           devActorLossTensor = tf.keep(actorLoss.clone());
           devEntropyTensor = tf.keep(entropy.clone());
           return loss as tf.Scalar;
@@ -683,13 +673,13 @@ export async function trainRL(
       }
 
       // 2. Optimize Government Actor (Policy network)
-      if (govT > 0 && govStatesTensor && govAdjTensor && govActionsTensor && govOldLogProbsTensor && govAdvantagesTensor && govMasksTensor) {
+      if (govT > 0 && govStatesTensor && govActionsTensor && govOldLogProbsTensor && govAdvantagesTensor && govMasksTensor) {
         let epGovActorLoss = 0;
         let epGovEntropy = 0;
         let govActorLossTensor: tf.Tensor | null = null;
         let govEntropyTensor: tf.Tensor | null = null;
         const lossTensor = govOptimizer.minimize(() => {
-          const logits = governmentModel.predict([govStatesTensor!, govAdjTensor!]) as tf.Tensor;
+          const logits = governmentModel.predict(govStatesTensor!) as tf.Tensor;
           const maskedLogits = tf.where(govMasksTensor!.greater(0), logits, tf.fill(logits.shape, -1e9));
           const probs = tf.softmax(maskedLogits);
           const newProbs = tf.sum(probs.mul(tf.oneHot(govActionsTensor!, outputSize)), 1);
@@ -700,7 +690,7 @@ export async function trainRL(
           const actorLoss = tf.mean(tf.minimum(surr1, surr2)).neg();
           const entropy = tf.mean(tf.sum(probs.mul(tf.log(probs.add(1e-8))).neg(), 1));
           const loss = actorLoss.sub(entropy.mul(0.01));
-
+ 
           govActorLossTensor = tf.keep(actorLoss.clone());
           govEntropyTensor = tf.keep(entropy.clone());
           return loss as tf.Scalar;
@@ -729,16 +719,16 @@ export async function trainRL(
         const cLossTensor = criticOptimizer.minimize(() => {
           let loss: tf.Tensor = tf.scalar(0);
           let hasLoss = false;
-          if (devT > 0 && devStatesTensor && devAdjTensor && devReturnsTensor) {
-            const devPreds = centralizedCriticModel.apply([devStatesTensor!, devAdjTensor!], { training: true }) as tf.Tensor;
+          if (devT > 0 && devStatesTensor && devReturnsTensor) {
+            const devPreds = centralizedCriticModel.apply(devStatesTensor!, { training: true }) as tf.Tensor;
             const devPredValues = tf.slice(devPreds, [0, 0], [-1, 1]); // index 0 is Developer
             const cLoss = tf.losses.meanSquaredError(devReturnsTensor!, devPredValues);
             devCLossTensor = tf.keep(cLoss.clone());
             loss = loss.add(cLoss);
             hasLoss = true;
           }
-          if (govT > 0 && govStatesTensor && govAdjTensor && govReturnsTensor) {
-            const govPreds = centralizedCriticModel.apply([govStatesTensor!, govAdjTensor!], { training: true }) as tf.Tensor;
+          if (govT > 0 && govStatesTensor && govReturnsTensor) {
+            const govPreds = centralizedCriticModel.apply(govStatesTensor!, { training: true }) as tf.Tensor;
             const govPredValues = tf.slice(govPreds, [0, 1], [-1, 1]); // index 1 is Government
             const cLoss = tf.losses.meanSquaredError(govReturnsTensor!, govPredValues);
             govCLossTensor = tf.keep(cLoss.clone());
@@ -765,7 +755,6 @@ export async function trainRL(
 
     // Clean up pre-created tensors
     if (devStatesTensor) devStatesTensor.dispose();
-    if (devAdjTensor) devAdjTensor.dispose();
     if (devActionsTensor) devActionsTensor.dispose();
     if (devOldLogProbsTensor) devOldLogProbsTensor.dispose();
     if (devReturnsTensor) devReturnsTensor.dispose();
@@ -773,7 +762,6 @@ export async function trainRL(
     if (devMasksTensor) devMasksTensor.dispose();
 
     if (govStatesTensor) govStatesTensor.dispose();
-    if (govAdjTensor) govAdjTensor.dispose();
     if (govActionsTensor) govActionsTensor.dispose();
     if (govOldLogProbsTensor) govOldLogProbsTensor.dispose();
     if (govReturnsTensor) govReturnsTensor.dispose();
@@ -870,11 +858,11 @@ export function getRLActionRecommendation(
   };
 
   const neighborMap = buildNeighborMap(normalizedGraph.blocks);
-  const { nodeFeatures, normalizedAdj } = encodeGraphStateGNN(normalizedGraph, neighborMap);
+  const gnnOut = encodeGraphStateGNN(normalizedGraph, neighborMap);
+  const stateFeatures = gnnOut.nodeFeatures.flat();
   const logits = tf.tidy(() => {
-    const xs = tf.tensor3d([nodeFeatures]);
-    const adj = tf.tensor3d([normalizedAdj]);
-    const ys = model.predict([xs, adj]) as tf.Tensor;
+    const xs = tf.tensor2d([stateFeatures]);
+    const ys = model.predict(xs) as tf.Tensor;
     return Array.from(ys.dataSync());
   });
 
@@ -1028,18 +1016,14 @@ export async function loadRLModelFromSingleFile(jsonFile: File): Promise<void> {
   setActorModel(PlayerType.DEVELOPER, devModel);
   setActorModel(PlayerType.GOVERNMENT, govModel);
 
-  const inFeatures = devModel.inputs[0].shape[2] || 7;
+  const inputSize = devModel.inputs[0].shape[1] || (477 * GNN_INPUT_FEATURES); // 默认以全图 477 个单元为例
 
   // Re-initialize Centralized Critic network
-  const featuresInput = tf.input({ shape: [null, inFeatures], name: 'node_features' });
-  const adjInput = tf.input({ shape: [null, null], name: 'adjacency_matrix' });
+  const featuresInput = tf.input({ shape: [inputSize], name: 'state_features' });
 
-  const gcn1 = new GCNLayer({ units: GNN_HIDDEN_1 }).apply([featuresInput, adjInput]) as tf.SymbolicTensor;
-  const gcn2 = new GCNLayer({ units: GNN_HIDDEN_2 }).apply([gcn1, adjInput]) as tf.SymbolicTensor;
+  const dense1 = tf.layers.dense({ units: 256, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
+  const dense2 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
+  const output = tf.layers.dense({ units: 2 }).apply(dense2) as tf.SymbolicTensor;
 
-  const pooled = tf.layers.globalAveragePooling1d({}).apply(gcn2) as tf.SymbolicTensor;
-  const dense = tf.layers.dense({ units: CRITIC_DENSE, activation: 'relu' }).apply(pooled) as tf.SymbolicTensor;
-  const output = tf.layers.dense({ units: 2 }).apply(dense) as tf.SymbolicTensor;
-
-  setCentralizedCriticModel(tf.model({ inputs: [featuresInput, adjInput], outputs: output }));
+  setCentralizedCriticModel(tf.model({ inputs: featuresInput, outputs: output }));
 }

@@ -132,45 +132,33 @@ export let centralizedCriticModel: tf.LayersModel | null = null;
 /**
  * 通用方法：创建单个 Actor 神经网络模型
  */
-export function createActorModel(inFeatures: number): tf.LayersModel {
-  const featuresInput = tf.input({ shape: [null, inFeatures], name: 'node_features' });
-  const adjInput = tf.input({ shape: [null, null], name: 'adjacency_matrix' });
+export function createActorModel(inputSize: number, outputSize: number): tf.LayersModel {
+  const featuresInput = tf.input({ shape: [inputSize], name: 'state_features' });
 
-  const gcn1 = new GCNLayer({ units: GNN_HIDDEN_1 }).apply([featuresInput, adjInput]) as tf.SymbolicTensor;
-  const gcn2 = new GCNLayer({ units: GNN_HIDDEN_2 }).apply([gcn1, adjInput]) as tf.SymbolicTensor;
+  const dense1 = tf.layers.dense({ units: 256, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
+  const dense2 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
+  const output = tf.layers.dense({ units: outputSize }).apply(dense2) as tf.SymbolicTensor;
 
-  const nodeLogits = tf.layers.dense({ units: buildableTypes.length }).apply(gcn2) as tf.SymbolicTensor;
-  const reshapedNodeLogits = tf.layers.reshape({ targetShape: [-1] }).apply(nodeLogits) as tf.SymbolicTensor;
-
-  const pooled = tf.layers.globalAveragePooling1d({}).apply(gcn2) as tf.SymbolicTensor;
-  const skipLogit = tf.layers.dense({ units: 1 }).apply(pooled) as tf.SymbolicTensor;
-
-  const output = tf.layers.concatenate({ axis: 1 }).apply([reshapedNodeLogits, skipLogit]) as tf.SymbolicTensor;
-
-  return tf.model({ inputs: [featuresInput, adjInput], outputs: output });
+  return tf.model({ inputs: featuresInput, outputs: output });
 }
 
 /**
  * 通用方法：创建 Centralized Critic 神经网络模型
  */
-export function createCriticModel(inFeatures: number): tf.LayersModel {
-  const featuresInput = tf.input({ shape: [null, inFeatures], name: 'node_features' });
-  const adjInput = tf.input({ shape: [null, null], name: 'adjacency_matrix' });
+export function createCriticModel(inputSize: number): tf.LayersModel {
+  const featuresInput = tf.input({ shape: [inputSize], name: 'state_features' });
 
-  const gcn1 = new GCNLayer({ units: GNN_HIDDEN_1 }).apply([featuresInput, adjInput]) as tf.SymbolicTensor;
-  const gcn2 = new GCNLayer({ units: GNN_HIDDEN_2 }).apply([gcn1, adjInput]) as tf.SymbolicTensor;
+  const dense1 = tf.layers.dense({ units: 256, activation: 'relu' }).apply(featuresInput) as tf.SymbolicTensor;
+  const dense2 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(dense1) as tf.SymbolicTensor;
+  const output = tf.layers.dense({ units: 2 }).apply(dense2) as tf.SymbolicTensor;
 
-  const pooled = tf.layers.globalAveragePooling1d({}).apply(gcn2) as tf.SymbolicTensor;
-  const dense = tf.layers.dense({ units: CRITIC_DENSE, activation: 'relu' }).apply(pooled) as tf.SymbolicTensor;
-  const output = tf.layers.dense({ units: 2 }).apply(dense) as tf.SymbolicTensor;
-
-  return tf.model({ inputs: [featuresInput, adjInput], outputs: output });
+  return tf.model({ inputs: featuresInput, outputs: output });
 }
 
 /**
  * 初始化或获取已存在的强化学习模型及评判网络 (支持多角色动态映射)
  */
-export function initOrGetRLModels(inFeatures: number): {
+export function initOrGetRLModels(inputSize: number, outputSize: number): {
   actors: Map<PlayerType, tf.LayersModel>;
   centralizedCriticModel: tf.LayersModel;
 } {
@@ -182,7 +170,7 @@ export function initOrGetRLModels(inFeatures: number): {
       console.log(`[MAPPO] Reusing existing loaded/trained Player Actor model: ${PlayerConfig[playerType].name}`);
     } else {
       console.log(`[MAPPO] Initializing new Player Actor model: ${PlayerConfig[playerType].name}`);
-      const model = createActorModel(inFeatures);
+      const model = createActorModel(inputSize, outputSize);
       actorModels.set(playerType, model);
     }
   }
@@ -191,7 +179,7 @@ export function initOrGetRLModels(inFeatures: number): {
     console.log("[MAPPO] Reusing existing loaded/trained Centralized Critic model.");
   } else {
     console.log("[MAPPO] Initializing new Centralized Critic model.");
-    centralizedCriticModel = createCriticModel(inFeatures);
+    centralizedCriticModel = createCriticModel(inputSize);
   }
 
   return {
