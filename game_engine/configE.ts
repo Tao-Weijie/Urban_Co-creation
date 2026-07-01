@@ -1,3 +1,5 @@
+import { remap, getGradientToWhite } from './function';
+
 export enum UnitType {
   EMPTY = 0,
   RESIDENTIAL = 1,
@@ -135,3 +137,42 @@ export const GlobalStateIndicatorsConfig: GlobalStateIndicator[] = [
     getValue: (data, global) => global?.total_population ?? 0
   }
 ];
+
+export interface DisplayModeConfig {
+  key: string;
+  label: string;
+  showUnits: boolean;
+  getBlockStyle: (value: number, theme?: 'light' | 'dark') => { color: string; opacity: number };
+  min?: number;
+  max?: number;
+}
+
+export const DISPLAY_MODES: Record<string, DisplayModeConfig> = {
+  N: {
+    key: 'N',
+    label: 'Default',
+    showUnits: true,
+    getBlockStyle: (_, theme) => ({
+      color: '#4b5563', // 灰色
+      opacity: theme === 'light' ? 0.28 : 0.15, // 亮色模式下适当提升透明度以在白色背景中看清
+    }),
+  },
+  V: {
+    key: 'V',
+    label: 'Value',
+    showUnits: false,
+    min: 15,
+    max: 100,
+    getBlockStyle: (value: number) => {
+      const minVal = DISPLAY_MODES.V.min ?? 0;
+      const maxVal = DISPLAY_MODES.V.max ?? 100;
+      const factor = remap(value, minVal, maxVal);
+      return {
+        color: getGradientToWhite('#3b82f6', factor), // 只输入 0-1 的 factor 值
+        opacity: 1.0,
+      };
+    },
+  },
+};
+
+export type DisplayModeKey = keyof typeof DISPLAY_MODES;

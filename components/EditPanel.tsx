@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGame } from '../context/GameContext';
-import { UnitTypeConfig, UnitType } from '@/game_engine/config';
+import { UnitTypeConfig, UnitType } from '@/game_engine/configE';
 
 export default function EditPanel() {
   const {
@@ -19,7 +19,7 @@ export default function EditPanel() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-96 rounded-3xl outline outline-1 outline-black/10 bg-white dark:outline-white/10 dark:bg-zinc-950 p-6 shadow-2xl space-y-5 text-zinc-800 dark:text-zinc-200 animate-in fade-in zoom-in-95 duration-150">
+      <div className="w-96 rounded-3xl outline outline-1 outline-black/10 bg-white dark:outline-white/10 dark:bg-zinc-950 p-6 space-y-5 text-zinc-800 dark:text-zinc-200 animate-in fade-in zoom-in-95 duration-150">
         
         {/* Panel Header */}
         <div className="flex justify-between items-center pb-2">

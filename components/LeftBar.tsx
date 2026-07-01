@@ -1,6 +1,6 @@
 import React from 'react';
 import { JsonImporter } from './JsonImporter';
-import { GlobalStateIndicatorsConfig } from '../game_engine/config';
+import { GlobalStateIndicatorsConfig } from '../game_engine/configE';
 import { useGame } from '../context/GameContext';
 import { hexToRgba } from './global';
 
@@ -59,10 +59,12 @@ export default function LeftBar() {
     setTurnOrder,
     handleJsonImported,
     handleJsonLoadingStart,
-    handleJsonLoadingEnd
+    handleJsonLoadingEnd,
+    gameHistory
   } = useGame();
 
   const topologyData = displayedTopologyData;
+  const gameHistoryLength = gameHistory?.length ?? 0;
   const global = displayedGlobal;
   const turnOrder = displayedTurnOrder;
   const activeRoleIndex = displayedActiveRoleIndex;
@@ -177,6 +179,7 @@ export default function LeftBar() {
         <div className="app-section-card space-y-3">
           <div className="flex justify-between items-center">
             <span className="app-subtitle block">Game Mode</span>
+            <span className="text-xs text-gray-400">Turn {gameStarted ? turnNumber : 0}/{gameHistoryLength}</span>
           </div>
           {!gameStarted ? (
             /* SETUP PHASE */
@@ -317,7 +320,7 @@ export default function LeftBar() {
                 }
 
                 const displayColor = ind.color;
-                const formattedVal = typeof val === 'number' ? val.toLocaleString() : val;
+                const formattedVal = typeof val === 'number' ? Math.round(val).toLocaleString() : val;
 
                 return (
                   <div key={ind.key} className="flex justify-between items-center">

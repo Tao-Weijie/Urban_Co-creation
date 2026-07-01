@@ -1,5 +1,5 @@
 import React from 'react';
-import { UrbanUnit, TopologyData, UnitTypeConfig, UnitType } from '@/game_engine/config';
+import { UrbanUnit, TopologyData, UnitTypeConfig, UnitType } from '@/game_engine/configE';
 
 import { useGame } from '../context/GameContext';
 
@@ -36,22 +36,18 @@ export default function HoverPanel() {
   }
 
   return (
-    <div 
+    <div
       style={{ left, top }}
-      className="fixed pointer-events-none z-50 w-72 app-bar p-4"
+      data-html2canvas-ignore="true"
+      className="fixed pointer-events-none z-50 w-72 app-bar p-5"
     >
       <div className="space-y-3 font-mono text-xs">
-        {/* Tooltip Header */}
-        <div className="space-y-2">
-          <div className="flex justify-between items-center pb-1">
-            <span className="text-zinc-500 dark:text-zinc-400">Hovered Unit:</span>
-            <span className="font-semibold text-pink-500 truncate max-w-[130px]">
-              Unit {unit.topology.id}
-            </span>
-          </div>
-          <div className="h-[1px] bg-black/5 dark:bg-white/5 w-full" />
+        <div>
+          <span className="font-bold text-pink-500 block">
+            Unit {unit.topology.id}
+          </span>
         </div>
-        
+
         {/* Tooltip Metrics */}
         <div className="space-y-2 text-zinc-600 dark:text-zinc-300">
           <div className="flex justify-between">
@@ -82,18 +78,11 @@ export default function HoverPanel() {
           </div>
           <div className="flex justify-between">
             <span>block value:</span>
-            <span className="text-pink-500 dark:text-pink-400 font-semibold">{block?.state?.value ?? 0}</span>
+            <span className="text-pink-500 dark:text-pink-400 font-semibold">{Math.round(block?.state?.value ?? 0)}</span>
           </div>
           <div className="flex justify-between">
             <span>population:</span>
             <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{unit.state.population ?? 0}</span>
-          </div>
-        </div>
-        
-        <div className="space-y-2">
-          <div className="h-[1px] bg-black/5 dark:bg-white/5 w-full" />
-          <div className="pt-1 text-[9px] text-zinc-500 dark:text-zinc-400 italic text-center">
-            Click on any unit mesh to edit its type.
           </div>
         </div>
       </div>

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ececec;
   --foreground: #18181b;
@@ -67,7 +69,7 @@ input[type=number] {
 .app-switch-dot,
 .app-switch-sm-dot,
 .app-switch-md-dot {
-  @apply pointer-events-none inline-block rounded-full bg-white shadow transition duration-200 ease-in-out;
+  @apply pointer-events-none inline-block rounded-full bg-white transition duration-200 ease-in-out;
 }
 
 .app-switch-sm {
@@ -215,4 +217,74 @@ input[type=number] {
     height: 100%;
     opacity: 0;
   }
+}
+
+/* Circular control button style in BottomBar */
+.app-bar-circle-btn-base,
+.app-bar-circle-btn {
+  @apply w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-full transition-all duration-200 outline-none select-none cursor-pointer;
+  @apply bg-white dark:bg-zinc-900;
+  @apply text-zinc-700 dark:text-zinc-300;
+  @apply border border-zinc-200/60 dark:border-zinc-700/60;
+  @apply active:scale-95;
+}
+
+.app-bar-circle-btn-base:disabled,
+.app-bar-circle-btn:disabled {
+  @apply opacity-30 cursor-not-allowed;
+}
+
+/* Legacy hover style: both background/border and icon change color */
+.app-bar-circle-btn:hover:not(:disabled) {
+  @apply bg-zinc-100 dark:bg-zinc-800 text-pink-500 border-pink-500/20 dark:border-pink-500/20;
+}
+
+/* Hover style: ONLY the icon body changes color to primary pink, container remains completely static */
+.app-bar-circle-btn-icon-only-hover:hover:not(:disabled) {
+  @apply text-pink-500;
+}
+
+/* Training Metrics Dashboard Styling */
+.app-metrics-grid {
+  @apply grid grid-cols-2 gap-2 text-[8px] font-mono text-zinc-500;
+}
+
+.app-metrics-item {
+  @apply flex flex-col;
+}
+
+.app-metrics-label {
+  @apply block text-[6.5px] text-zinc-400 uppercase tracking-wide;
+}
+
+.app-metrics-value {
+  @apply font-bold text-zinc-700 dark:text-zinc-300;
+}
+
+.app-reward-badge {
+  @apply text-[8px] font-mono font-bold px-1.5 py-[1px] rounded transition-all duration-200 select-none;
+}
+
+.app-reward-badge-positive {
+  @apply bg-emerald-500/10 text-emerald-500;
+}
+
+.app-reward-badge-negative {
+  @apply bg-red-500/10 text-red-500;
+}
+
+.app-reward-badge-neutral {
+  @apply bg-zinc-500/10 text-zinc-500;
+}
+
+.app-entropy-container {
+  @apply space-y-0.5 text-[8px] font-mono text-zinc-500;
+}
+
+.app-entropy-header {
+  @apply flex justify-between text-[7px] text-zinc-400;
+}
+
+.app-entropy-progress-bg {
+  @apply w-full h-1 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden;
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { TopologyData } from '../game_engine/config';
+import { TopologyData } from '../game_engine/configE';
 
 interface JsonImporterProps {
   gridName: string;

@@ -1,7 +1,6 @@
 # Urban Co-creation 
 
 Urban Co-creation is a platform for interactive urban grid layout and optimization using Multi-Agent Proximal Policy Optimization (MAPPO).
-本系统是一个城市格网交互规划与优化平台，集成了基于 MAPPO（多智能体强化学习）算法的智能推荐。
 
 ---
 

@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Block, UrbanUnit, TopologyData, UnitTypeConfig, UnitType } from '@/game_engine/config';
+import { Block, UrbanUnit, TopologyData, UnitTypeConfig, UnitType, DISPLAY_MODES, DisplayModeKey } from '@/game_engine/configE';
 
 import { useGame } from '../context/GameContext';
 
@@ -29,7 +29,10 @@ export default function Viewport3D() {
     setSelectedUnitForEdit,
     setIsEditModalOpen,
     setIsLoading,
-    setIsModelLoading
+    setIsModelLoading,
+    isCameraLocked,
+    displayMode,
+    theme
   } = useGame();
 
   const topologyData = displayedTopologyData;
@@ -73,6 +76,9 @@ export default function Viewport3D() {
   const backgroundGroupRef = useRef<THREE.Group | null>(null);
   const topologyGroupRef = useRef<THREE.Group | null>(null);
   const hoveredMeshRef = useRef<THREE.Mesh | null>(null);
+  const gridHelperRef = useRef<THREE.GridHelper | null>(null);
+  const xAxisRef = useRef<THREE.Line | null>(null);
+  const yAxisRef = useRef<THREE.Line | null>(null);
 
   // Interactive / Hover references
   const raycasterRef = useRef(new THREE.Raycaster());
@@ -80,6 +86,7 @@ export default function Viewport3D() {
   // Cache last loaded model/grid names to prevent view reset on edits
   const lastModelNameRef = useRef<string>('');
   const lastGridNameRef = useRef<string>('');
+  const lastDisplayModeRef = useRef<string | null>(null);
 
   // Reusable materials
   const blockMaterialRef = useRef(
@@ -179,7 +186,7 @@ export default function Viewport3D() {
     cameraRef.current = camera;
 
     // 3. Initialize WebGLRenderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
@@ -204,6 +211,7 @@ export default function Viewport3D() {
     gridHelper.rotation.x = Math.PI / 2;
     gridHelper.position.set(0, 0, 0);
     scene.add(gridHelper);
+    gridHelperRef.current = gridHelper;
 
     // 6. Custom X (Red) and Y (Green) axes
     const xGeometry = new THREE.BufferGeometry().setFromPoints([
@@ -213,6 +221,7 @@ export default function Viewport3D() {
     const xMaterial = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 });
     const xAxis = new THREE.Line(xGeometry, xMaterial);
     scene.add(xAxis);
+    xAxisRef.current = xAxis;
 
     const yGeometry = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(0, 0, 0.01),
@@ -221,6 +230,7 @@ export default function Viewport3D() {
     const yMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
     const yAxis = new THREE.Line(yGeometry, yMaterial);
     scene.add(yAxis);
+    yAxisRef.current = yAxis;
 
     // 7. Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
@@ -510,6 +520,7 @@ export default function Viewport3D() {
         // Cache original material
         mesh.userData.originalMaterial = mesh.material;
 
+        const hasVertexColors = !!(mesh.geometry && mesh.geometry.attributes.color);
         let hasTexture = false;
         if (mesh.material) {
           const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -524,12 +535,13 @@ export default function Viewport3D() {
 
         if (!hasTexture) {
           mesh.material = new THREE.MeshStandardMaterial({
-            color: 0xcccccc,
+            color: hasVertexColors ? 0xffffff : 0xcccccc,
+            vertexColors: hasVertexColors,
             roughness: 0.8,
             metalness: 0.1,
             transparent: false
           });
-          mesh.userData.isOriginallyWhite = true;
+          mesh.userData.isOriginallyWhite = !hasVertexColors;
         } else {
           mesh.userData.isOriginallyWhite = false;
         }
@@ -591,6 +603,7 @@ export default function Viewport3D() {
     // Check if we can reuse the existing grid and only update materials
     const canReuseGrid =
       gridName === lastGridNameRef.current &&
+      displayMode === lastDisplayModeRef.current &&
       unitMeshesRef.current.size === data.units.length &&
       data.units.every((u) => unitMeshesRef.current.has(u.topology.id));
 
@@ -599,15 +612,15 @@ export default function Viewport3D() {
       return;
     }
 
+    lastDisplayModeRef.current = displayMode;
     clearTopologyGroupObjects();
 
     if (!data.blocks || data.blocks.length === 0) return;
 
     const uniqueVertices = new Map<string, THREE.Vector3>();
+    const modeConfig = DISPLAY_MODES[displayMode as DisplayModeKey] || DISPLAY_MODES.N;
 
-    // 1. Construct Block geometries (flat faces)
-    const blockGeometries: THREE.BufferGeometry[] = [];
-
+    // 1. Construct Block geometries (flat faces) and meshes
     data.blocks.forEach((block) => {
       const geom = block.geometry || (block as any);
       const topo = block.topology || (block as any);
@@ -629,7 +642,28 @@ export default function Viewport3D() {
           geometry = nonIndexedGeometry;
         }
 
-        blockGeometries.push(geometry);
+        const blockVal = block.state?.value ?? 30.0;
+        const style = modeConfig.getBlockStyle(blockVal, theme);
+        const blockMaterial = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(style.color),
+          roughness: 0.4,
+          metalness: 0.2,
+          transparent: true,
+          opacity: style.opacity,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1
+        });
+
+        const blockMesh = new THREE.Mesh(geometry, blockMaterial);
+        blockMesh.userData = {
+          isBlock: true,
+          name: "Topology Block Mesh",
+          blockId: topo.id
+        };
+        topologyGroup.add(blockMesh);
 
         boundary.forEach((p) => {
           const key = `${p[0].toFixed(2)},${p[1].toFixed(2)},${p[2].toFixed(2)}`;
@@ -640,78 +674,67 @@ export default function Viewport3D() {
       }
     });
 
-    if (blockGeometries.length > 0) {
-      const mergedBlockGeometry = BufferGeometryUtils.mergeGeometries(blockGeometries, false);
-      if (mergedBlockGeometry) {
-        const blockMesh = new THREE.Mesh(mergedBlockGeometry, blockMaterialRef.current);
-        blockMesh.userData = {
-          isBlock: true,
-          name: "Topology Block Mesh",
-          blocksData: data.blocks
-        };
-        topologyGroup.add(blockMesh);
-      }
-    }
-
     // 2. Construct Unit geometries (extruded buildings)
-    data.units.forEach((unit) => {
-      const geom = unit.geometry || (unit as any);
-      const topo = unit.topology || (unit as any);
-      const boundary = geom.boundary;
-      if (boundary && boundary.length > 2 && geom.height > 0) {
-        const shape = new THREE.Shape();
-        shape.moveTo(boundary[0][0], boundary[0][1]);
-        for (let i = 1; i < boundary.length; i++) {
-          shape.lineTo(boundary[i][0], boundary[i][1]);
-        }
-        shape.closePath();
+    if (modeConfig.showUnits) {
+      data.units.forEach((unit) => {
+        const geom = unit.geometry || (unit as any);
+        const topo = unit.topology || (unit as any);
+        const boundary = geom.boundary;
+        if (boundary && boundary.length > 2 && geom.height > 0) {
+          const shape = new THREE.Shape();
+          shape.moveTo(boundary[0][0], boundary[0][1]);
+          for (let i = 1; i < boundary.length; i++) {
+            shape.lineTo(boundary[i][0], boundary[i][1]);
+          }
+          shape.closePath();
 
-        // 支持自身的天井挖孔
-        const hole = geom.hole;
-        if (hole && hole.length > 0) {
-          hole.forEach((holeBoundary: any) => {
-            if (holeBoundary && holeBoundary.length > 2) {
-              const holePath = new THREE.Path();
-              holePath.moveTo(holeBoundary[0][0], holeBoundary[0][1]);
-              for (let i = 1; i < holeBoundary.length; i++) {
-                holePath.lineTo(holeBoundary[i][0], holeBoundary[i][1]);
+          // 支持自身的天井挖孔
+          const hole = geom.hole;
+          if (hole && hole.length > 0) {
+            hole.forEach((holeBoundary: any) => {
+              if (holeBoundary && holeBoundary.length > 2) {
+                const holePath = new THREE.Path();
+                holePath.moveTo(holeBoundary[0][0], holeBoundary[0][1]);
+                for (let i = 1; i < holeBoundary.length; i++) {
+                  holePath.lineTo(holeBoundary[i][0], holeBoundary[i][1]);
+                }
+                holePath.closePath();
+                shape.holes.push(holePath);
               }
-              holePath.closePath();
-              shape.holes.push(holePath);
-            }
+            });
+          }
+
+          const height = geom.height; // 直接采用绝对高度拉伸
+          let geometry: THREE.BufferGeometry = new THREE.ExtrudeGeometry(shape, {
+            depth: height,
+            bevelEnabled: false
           });
+
+          if (geometry.index !== null) {
+            const nonIndexedGeometry = geometry.toNonIndexed();
+            geometry.dispose();
+            geometry = nonIndexedGeometry;
+          }
+
+          const meshMaterial = getBaseMaterial(unit.state.type);
+          const unitMesh = new THREE.Mesh(geometry, meshMaterial);
+
+          // Calculate Z position to stack units within the same building, using absolute height
+          const startZ = boundary[0][2];
+          unitMesh.position.z = startZ;
+
+          unitMesh.userData = {
+            isRegion: true,
+            isUnit: true,
+            unitId: topo.id,
+            unit: unit
+          };
+
+          topologyGroup.add(unitMesh);
+          unitMeshesRef.current.set(topo.id, unitMesh);
         }
-
-        const height = geom.height; // 直接采用绝对高度拉伸
-        let geometry: THREE.BufferGeometry = new THREE.ExtrudeGeometry(shape, {
-          depth: height,
-          bevelEnabled: false
-        });
-
-        if (geometry.index !== null) {
-          const nonIndexedGeometry = geometry.toNonIndexed();
-          geometry.dispose();
-          geometry = nonIndexedGeometry;
-        }
-
-        const meshMaterial = getBaseMaterial(unit.state.type);
-        const unitMesh = new THREE.Mesh(geometry, meshMaterial);
-        
-        // Calculate Z position to stack units within the same building, using absolute height
-        const startZ = boundary[0][2];
-        unitMesh.position.z = startZ;
-
-        unitMesh.userData = {
-          isRegion: true,
-          isUnit: true,
-          unitId: topo.id,
-          unit: unit
-        };
-
-        topologyGroup.add(unitMesh);
-        unitMeshesRef.current.set(topo.id, unitMesh);
-      }
-    });
+      });
+    }
 
     // 3. Draw outlines
     const allOutlinePoints: THREE.Vector3[] = [];
@@ -821,7 +844,7 @@ export default function Viewport3D() {
         fitCameraToAllUploaded();
       }
     }
-  }, [topologyData, gridName]);
+  }, [topologyData, gridName, displayMode, theme]);
 
 
 
@@ -852,6 +875,27 @@ export default function Viewport3D() {
 
     onStandardViewProcessed();
   }, [standardView]);
+
+  // Watch for model or topology loading to show/hide base grid and XY axes helper
+  useEffect(() => {
+    const hasData = !!modelName || !!topologyData;
+    if (gridHelperRef.current) {
+      gridHelperRef.current.visible = !hasData;
+    }
+    if (xAxisRef.current) {
+      xAxisRef.current.visible = !hasData;
+    }
+    if (yAxisRef.current) {
+      yAxisRef.current.visible = !hasData;
+    }
+  }, [modelName, topologyData]);
+
+  // Watch for camera lock updates
+  useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.enabled = !isCameraLocked;
+    }
+  }, [isCameraLocked]);
 
   return (
     <div

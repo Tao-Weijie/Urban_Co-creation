@@ -4,7 +4,7 @@ import {
   TopologyMetadata,
   UrbanUnit,
   ActionType
-} from '@/game_engine/config';
+} from '@/game_engine/configE';
 import { tsEngine } from '@/game_engine/engine';
 import {
   trainRL,
@@ -92,7 +92,11 @@ interface GameContextType {
 
   // Views
   standardView: 'top' | 'front' | 'left' | null;
+  displayMode: string;
+  setDisplayMode: (mode: string) => void;
   setStandardView: (view: 'top' | 'front' | 'left' | null) => void;
+  isCameraLocked: boolean;
+  setIsCameraLocked: (val: boolean) => void;
 
   // Derived timeline states
   isBrowsingHistory: boolean;
@@ -351,7 +355,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           let chosenAction = actions[Math.floor(Math.random() * actions.length)];
           if (isRlLoaded && topologyData) {
-            const recommendation = getRLActionRecommendation(topologyData, actions);
+            const allowedBuildings = rolesConfig[String(activePlayer)]?.allowed_types || [];
+            const defaultUnitType = allowedBuildings.length > 0 ? Number(allowedBuildings[0]) : null;
+            const rActions = actions.map((a: any[]) => [
+              a[0],
+              a[1],
+              a[0] === 0 ? null : defaultUnitType
+            ]) as [number, number | null, number | null][];
+
+            const recommendation = getRLActionRecommendation(topologyData, rActions);
             if (recommendation) {
               const matchedAction = actions.find((a: any[]) => a[0] === recommendation.actionType && a[1] === recommendation.unitId);
               if (matchedAction) {
@@ -392,6 +404,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // View switch trigger
   const [standardView, setStandardView] = useState<'top' | 'front' | 'left' | null>(null);
+  const [displayMode, setDisplayMode] = useState<string>('N');
+  const [isCameraLocked, setIsCameraLocked] = useState<boolean>(false);
 
   // Upload environment background model
   const handleModelUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -883,6 +897,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setGameHistory,
       standardView,
       setStandardView,
+      displayMode,
+      setDisplayMode,
+      isCameraLocked,
+      setIsCameraLocked,
       isBrowsingHistory,
       displayedTopologyData,
       displayedGlobal,

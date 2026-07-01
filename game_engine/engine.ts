@@ -1,4 +1,5 @@
-import { UnitType, PlayerType, ActionType, PlayerConfig } from './config';
+import { UnitType, PlayerType, ActionType, PlayerConfig } from './configE';
+import { getUnitVolume } from './function';
 
 // Strict validation helper functions for enums as per project rules
 function validateUnitType(val: any): UnitType {
@@ -21,6 +22,10 @@ function validateActionType(val: any): ActionType {
     }
     throw new TypeError(`Invalid ActionType value: ${val}`);
 }
+
+
+
+
 
 export class UrbanUnit {
     topology: {
@@ -72,6 +77,7 @@ export class UrbanUnit {
     set population(val: number) { this.state.population = val; }
     get boundary() { return this.geometry.boundary; }
     get holes() { return this.geometry.hole; }
+    get volume() { return getUnitVolume(this); }
 
     static fromJson(data: any): UrbanUnit {
         const topology = data.topology;
@@ -154,7 +160,7 @@ export class UrbanGraph {
 
         const graph = new UrbanGraph(blocks, neighbor, units, player_order, game_started, timer);
         blocksData.forEach((b: any) => {
-            graph.blockValues.set(Number(b.topology?.id ?? b.id), b.state?.value ?? b.value ?? 30.0);
+            graph.blockValues.set(Number(b.topology.id), b.state.value ?? 30.0);
         });
         return graph;
     }
@@ -313,7 +319,15 @@ export class GameEngine {
         return valid_actions;
     }
 
-    static evaluate(graph: UrbanGraph): { government_profit: number, developer_profit: number, total_population: number } {
+    private static calculate_unit_population(height: number, blockValue: number): number {
+        const mu = 60.0;
+        const sigma = 20.0;
+        const P_max = 150.0;
+        const pop_per_floor = P_max * Math.exp(-Math.pow(blockValue - mu, 2) / (2 * Math.pow(sigma, 2)));
+        return Math.round(pop_per_floor) * height;
+    }
+
+    private static update_block_values(graph: UrbanGraph): void {
         const block_to_units: { [key: string]: UrbanUnit[] } = {};
         for (const u of graph.units) {
             const bid = String(u.blockid);
@@ -345,43 +359,77 @@ export class GameEngine {
             const blockVal = Math.max(15.0, Math.min(100.0, 30.0 + value_green - value_penalty));
             graph.blockValues.set(blockId, blockVal);
         }
+    }
 
-        const mu = 60.0;
-        const sigma = 20.0;
-        const P_max = 150.0;
-
+    static calculate_total_population(graph: UrbanGraph): number {
         let total_city_population = 0;
+        for (const u of graph.units) {
+            if (u.type === UnitType.RESIDENTIAL) {
+                const v = graph.blockValues.get(u.blockid) ?? 30.0;
+                u.population = GameEngine.calculate_unit_population(u.height, v);
+                total_city_population += u.population;
+            } else {
+                u.population = 0.0;
+            }
+        }
+        return total_city_population;
+    }
+
+    static evaluate_developer_profit(graph: UrbanGraph): number {
+        GameEngine.update_block_values(graph);
+
         let total_developer_revenue = 0;
         let total_developer_cost = 0;
+        let total_land_price = 0;
+
+        for (const u of graph.units) {
+            if (u.type === UnitType.RESIDENTIAL) {
+                const v = graph.blockValues.get(u.blockid) ?? 30.0;
+                const pop = GameEngine.calculate_unit_population(u.height, v);
+                u.population = pop;
+
+                total_developer_revenue += pop * v * 0.5;
+                total_developer_cost += 0.0;
+                total_land_price += u.volume * v;
+            } else {
+                u.population = 0.0;
+            }
+        }
+
+        const developer_net_profit = total_developer_revenue - total_developer_cost - total_land_price;
+        return Math.round(developer_net_profit * 10) / 10;
+    }
+
+    static evaluate_government_profit(graph: UrbanGraph): number {
+        GameEngine.update_block_values(graph);
+
         let total_land_price = 0;
         let total_tax_revenue = 0;
 
         for (const u of graph.units) {
             if (u.type === UnitType.RESIDENTIAL) {
                 const v = graph.blockValues.get(u.blockid) ?? 30.0;
-                const pop_per_floor = P_max * Math.exp(-Math.pow(v - mu, 2) / (2 * Math.pow(sigma, 2)));
-                const rounded_pop = Math.round(pop_per_floor) * u.height;
-                u.population = rounded_pop;
+                const pop = GameEngine.calculate_unit_population(u.height, v);
+                u.population = pop;
 
-                total_city_population += rounded_pop;
-                total_developer_revenue += rounded_pop * v * 0.5;
-                total_developer_cost += 0.0;
-                total_land_price += v * u.height * 10.0;
-                total_tax_revenue += rounded_pop * 10.0;
+                total_land_price += u.volume * v;
+                total_tax_revenue += pop * 10.0;
             } else {
                 u.population = 0.0;
             }
         }
 
-        const developer_net_profit = Math.round((total_developer_revenue - total_developer_cost - total_land_price) * 10) / 10;
-        const government_net_reserve = Math.round((total_land_price + total_tax_revenue) * 10) / 10;
-
-        return {
-            government_profit: Math.round(government_net_reserve),
-            developer_profit: developer_net_profit,
-            total_population: total_city_population
-        };
+        const government_net_reserve = total_land_price + total_tax_revenue;
+        return Math.round(government_net_reserve);
     }
+}
+
+function getEvaluation(graph: UrbanGraph) {
+    return {
+        government_profit: GameEngine.evaluate_government_profit(graph),
+        developer_profit: GameEngine.evaluate_developer_profit(graph),
+        total_population: GameEngine.calculate_total_population(graph)
+    };
 }
 
 class TSEngine {
@@ -411,7 +459,7 @@ class TSEngine {
 
     async buildGame(payload: any): Promise<any> {
         const graph = GameEngine.build_game(payload);
-        const metrics = GameEngine.evaluate(graph);
+        const metrics = getEvaluation(graph);
 
         this.activeGameGraph = graph;
         this.activeGameValidActions = [];
@@ -442,7 +490,7 @@ class TSEngine {
         }
 
         const graph = GameEngine.start_game(this.activeGameGraph, playerOrder);
-        const metrics = GameEngine.evaluate(graph);
+        const metrics = getEvaluation(graph);
 
         this.activeGameGraph = graph;
         this.activeGameValidActions = GameEngine.get_valid_actions(graph);
@@ -492,7 +540,7 @@ class TSEngine {
             builtType
         );
 
-        const metrics = GameEngine.evaluate(newGraph);
+        const metrics = getEvaluation(newGraph);
         this.activeGameGraph = newGraph;
         this.activeGameValidActions = GameEngine.get_valid_actions(newGraph);
 
@@ -532,7 +580,7 @@ class TSEngine {
     trainingStart(payload: any): any {
         const graph = GameEngine.build_game(payload.graph);
         const updatedGraph = GameEngine.start_game(graph, payload.player_order);
-        const metrics = GameEngine.evaluate(updatedGraph);
+        const metrics = getEvaluation(updatedGraph);
 
         this.trainingGraph = updatedGraph;
         this.trainingValidActions = GameEngine.get_valid_actions(updatedGraph);
@@ -577,7 +625,7 @@ class TSEngine {
             builtType
         );
 
-        const metrics = GameEngine.evaluate(newGraph);
+        const metrics = getEvaluation(newGraph);
         this.trainingGraph = newGraph;
         this.trainingValidActions = GameEngine.get_valid_actions(newGraph);
 

@@ -1,0 +1,227 @@
+/**
+ * Training Configurations (configT.ts)
+ * 包含强化学习、GNN 模型及训练的相关参数
+ */
+
+// 与前端 UI 交互的默认训练参数
+export const DEFAULT_EPISODES = 100;
+export const DEFAULT_LEARNING_RATE = 0.001;
+export const UI_UPDATE_INTERVAL = 5;
+
+// GNN 神经网络参数
+export const GNN_INPUT_FEATURES = 8;
+export const GNN_HIDDEN_1 = 64;
+export const GNN_HIDDEN_2 = 32;
+export const CRITIC_DENSE = 16;
+
+// 特征向量编码中的常数
+export const FEATURE_NORM_ID = 10.0;
+export const FEATURE_NORM_VALUE = 100.0;
+export const FEATURE_NORM_DEV_GAIN = 50000.0;
+export const FEATURE_NORM_GOV_GAIN = 10000.0;
+export const FEATURE_NORM_VOLUME = 1000.0; // 体积归一化常数
+
+// PPO 强化学习参数
+export const PPO_GAMMA = 0.97;
+export const PPO_CLIP_VAL = 0.2;
+export const PPO_EPOCHS = 4;
+
+// 强化学习博弈补偿与罚则
+export const PLACE_INCENTIVE = 0.25;
+export const SKIP_PENALTY = 0.5;
+
+import * as tf from '@tensorflow/tfjs';
+import { PlayerType, PlayerConfig } from './configE';
+import { getUnitVolume } from './function';
+
+/**
+ * 提取单个 Unit 节点的特征向量
+ */
+export function setFeature(
+  u: any,
+  devGain: number,
+  govGain: number,
+  v: number
+): number[] {
+  const type = u.state.type;
+  const idInBuilding = Number(u.topology.idinbuilding ?? 0);
+  const volume = getUnitVolume(u);
+
+  // 1. 归一化开发商潜在利润 (直接使用外部计算好的 evaluate 增量)
+  const normDevGain = Math.min(1, devGain / FEATURE_NORM_DEV_GAIN);
+
+  // 2. 归一化政府公共税收及影响增益 (直接使用外部计算好的 evaluate 增量)
+  const normGovGain = Math.min(1, govGain / FEATURE_NORM_GOV_GAIN);
+
+  // 3. 构建并统一返回 8 维特征向量列表
+  return [
+    type === 0 ? 1 : 0,                 // [1] 是否为空置状态 (One-Hot)
+    type === 1 ? 1 : 0,                 // [2] 是否为住宅状态 (One-Hot)
+    type === 2 ? 1 : 0,                 // [3] 是否为绿地状态 (One-Hot)
+    volume / FEATURE_NORM_VOLUME,       // [4] 体积归一化 (用 volume 替代原本的总高度特征)
+    idInBuilding / FEATURE_NORM_ID,     // [5] 所处楼宇内的楼层索引位置 (垂直相对高度)
+    v / FEATURE_NORM_VALUE,             // [6] 土地评估价值归一化
+    normDevGain,                        // [7] 开发商相对开发收益
+    normGovGain,                        // [8] 政府相对公共收益贡献
+  ];
+}
+
+/**
+ * 自定义图卷积网络层 (GCN Layer)
+ */
+export class GCNLayer extends tf.layers.Layer {
+  static className = 'GCNLayer';
+  private units: number;
+  private kernel!: tf.LayerVariable;
+  private bias!: tf.LayerVariable;
+
+  constructor(config: any) {
+    super(config);
+    this.units = config.units;
+  }
+
+  build(inputShape: any) {
+    const inFeatures = inputShape[0][2];
+    this.kernel = this.addWeight(
+      'kernel',
+      [1, inFeatures, this.units],
+      'float32',
+      tf.initializers.glorotNormal({})
+    );
+    this.bias = this.addWeight(
+      'bias',
+      [this.units],
+      'float32',
+      tf.initializers.zeros()
+    );
+  }
+
+  computeOutputShape(inputShape: any): any {
+    return [inputShape[0][0], inputShape[0][1], this.units];
+  }
+
+  call(inputs: tf.Tensor[]) {
+    return tf.tidy(() => {
+      const nodeFeatures = inputs[0] as tf.Tensor3D;
+      const normalizedAdj = inputs[1] as tf.Tensor3D;
+      const projection = tf.conv1d(nodeFeatures, this.kernel.read() as tf.Tensor3D, 1, 'same');
+      const aggregated = tf.matMul(normalizedAdj, projection);
+      return tf.relu(tf.add(aggregated, this.bias.read()));
+    });
+  }
+
+  getConfig() {
+    const config = super.getConfig();
+    Object.assign(config, { units: this.units });
+    return config;
+  }
+}
+tf.serialization.registerClass(GCNLayer);
+
+// 动态计算出所有合法的可建造 UnitType 列表
+export const buildableTypes = Array.from(
+  new Set(
+    Object.values(PlayerConfig).flatMap(p => p.allowed_types)
+  )
+).sort((a, b) => a - b);
+
+// 强化学习持久化 Actor 模型列表 (由 PlayerType 动态索引映射)
+export const actorModels = new Map<PlayerType, tf.LayersModel>();
+export let centralizedCriticModel: tf.LayersModel | null = null;
+
+/**
+ * 通用方法：创建单个 Actor 神经网络模型
+ */
+export function createActorModel(inFeatures: number): tf.LayersModel {
+  const featuresInput = tf.input({ shape: [null, inFeatures], name: 'node_features' });
+  const adjInput = tf.input({ shape: [null, null], name: 'adjacency_matrix' });
+
+  const gcn1 = new GCNLayer({ units: GNN_HIDDEN_1 }).apply([featuresInput, adjInput]) as tf.SymbolicTensor;
+  const gcn2 = new GCNLayer({ units: GNN_HIDDEN_2 }).apply([gcn1, adjInput]) as tf.SymbolicTensor;
+
+  const nodeLogits = tf.layers.dense({ units: buildableTypes.length }).apply(gcn2) as tf.SymbolicTensor;
+  const reshapedNodeLogits = tf.layers.reshape({ targetShape: [-1] }).apply(nodeLogits) as tf.SymbolicTensor;
+
+  const pooled = tf.layers.globalAveragePooling1d({}).apply(gcn2) as tf.SymbolicTensor;
+  const skipLogit = tf.layers.dense({ units: 1 }).apply(pooled) as tf.SymbolicTensor;
+
+  const output = tf.layers.concatenate({ axis: 1 }).apply([reshapedNodeLogits, skipLogit]) as tf.SymbolicTensor;
+
+  return tf.model({ inputs: [featuresInput, adjInput], outputs: output });
+}
+
+/**
+ * 通用方法：创建 Centralized Critic 神经网络模型
+ */
+export function createCriticModel(inFeatures: number): tf.LayersModel {
+  const featuresInput = tf.input({ shape: [null, inFeatures], name: 'node_features' });
+  const adjInput = tf.input({ shape: [null, null], name: 'adjacency_matrix' });
+
+  const gcn1 = new GCNLayer({ units: GNN_HIDDEN_1 }).apply([featuresInput, adjInput]) as tf.SymbolicTensor;
+  const gcn2 = new GCNLayer({ units: GNN_HIDDEN_2 }).apply([gcn1, adjInput]) as tf.SymbolicTensor;
+
+  const pooled = tf.layers.globalAveragePooling1d({}).apply(gcn2) as tf.SymbolicTensor;
+  const dense = tf.layers.dense({ units: CRITIC_DENSE, activation: 'relu' }).apply(pooled) as tf.SymbolicTensor;
+  const output = tf.layers.dense({ units: 2 }).apply(dense) as tf.SymbolicTensor;
+
+  return tf.model({ inputs: [featuresInput, adjInput], outputs: output });
+}
+
+/**
+ * 初始化或获取已存在的强化学习模型及评判网络 (支持多角色动态映射)
+ */
+export function initOrGetRLModels(inFeatures: number): {
+  actors: Map<PlayerType, tf.LayersModel>;
+  centralizedCriticModel: tf.LayersModel;
+} {
+  // 从引擎设置 PlayerConfig 中动态获取所有角色类型
+  const playerTypes = Object.keys(PlayerConfig).map(Number) as PlayerType[];
+
+  for (const playerType of playerTypes) {
+    if (actorModels.has(playerType)) {
+      console.log(`[MAPPO] Reusing existing loaded/trained Player Actor model: ${PlayerConfig[playerType].name}`);
+    } else {
+      console.log(`[MAPPO] Initializing new Player Actor model: ${PlayerConfig[playerType].name}`);
+      const model = createActorModel(inFeatures);
+      actorModels.set(playerType, model);
+    }
+  }
+
+  if (centralizedCriticModel) {
+    console.log("[MAPPO] Reusing existing loaded/trained Centralized Critic model.");
+  } else {
+    console.log("[MAPPO] Initializing new Centralized Critic model.");
+    centralizedCriticModel = createCriticModel(inFeatures);
+  }
+
+  return {
+    actors: actorModels,
+    centralizedCriticModel: centralizedCriticModel
+  };
+}
+
+/**
+ * 重置持久化模型缓存状态
+ */
+export function resetRLModels() {
+  actorModels.clear();
+  centralizedCriticModel = null;
+}
+
+/**
+ * 为指定角色设置 Actor 模型
+ */
+export function setActorModel(playerType: PlayerType, model: tf.LayersModel | null) {
+  if (model) {
+    actorModels.set(playerType, model);
+  } else {
+    actorModels.delete(playerType);
+  }
+}
+
+/**
+ * 设置 Centralized Critic 模型
+ */
+export function setCentralizedCriticModel(model: tf.LayersModel | null) {
+  centralizedCriticModel = model;
+}
