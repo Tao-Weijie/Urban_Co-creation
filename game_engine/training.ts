@@ -255,8 +255,10 @@ export async function trainRL(
   if (backendOption === 'wasm') {
     try {
       setWasmPaths('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm/dist/');
+      tf.env().set('WASM_HAS_MULTITHREAD_SUPPORT', true);
+      tf.env().set('WASM_HAS_SIMD_SUPPORT', true);
       await tf.setBackend('wasm');
-      console.log(`[MAPPO] Switched backend to: WASM`);
+      console.log(`[MAPPO] Switched backend to: WASM (SIMD & Multithread enabled)`);
     } catch (e) {
       console.warn(`[MAPPO] Failed to switch to WASM backend, fallback to CPU:`, e);
       await tf.setBackend('cpu');
@@ -499,8 +501,10 @@ export async function trainRL(
       finalDone = done;
       stepCount++;
 
-      // 主动释放 CPU 主线程控制权，防止在大图计算下浏览器 UI 卡顿死锁
-      await new Promise(resolve => setTimeout(resolve, 0));
+      // 每 50 步主动释放一次 CPU 主线程控制权，兼顾网页响应能力与硬件计算吞吐率
+      if (stepCount % 50 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
     }
 
     if (isCancelled()) break;
