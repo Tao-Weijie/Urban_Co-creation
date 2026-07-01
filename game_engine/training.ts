@@ -85,19 +85,21 @@ export function idToAction(
 }
 
 export function encodeGraphState(
-  graph: TopologyData
+  graph: TopologyData | UrbanGraph
 ): number[][] {
-  const units = graph.units;
+  const isInstance = graph instanceof UrbanGraph;
+  const baseGraph = isInstance ? graph : UrbanGraph.fromJson(graph);
+  const units = baseGraph.units;
   const N = units.length;
-  const baseGraph = UrbanGraph.fromJson(graph);
+
   // 预先跑一次以在 baseGraph 中缓存计算出当前地块的真实 blockValues 估值
   GameEngine.evaluate_developer_profit(baseGraph);
 
   const nodeFeatures: number[][] = [];
   for (let i = 0; i < N; i++) {
     const u = units[i];
-    const uid = Number(u.topology.id);
-    const bid = Number(u.topology.blockid);
+    const uid = u.id;
+    const bid = u.blockid;
 
     // 从已经缓存好的映射中快速直接读取原始地价 v
     const v = baseGraph.blockValues.get(bid) ?? 30;
@@ -167,56 +169,7 @@ export async function clearAllCachedModels(): Promise<void> {
   }
 }
 
-function getValidActions(state: TopologyData): [number, number | null, number | null][] {
-  const validActions: [number, number | null, number | null][] = [];
-  const metadata = state.metadata || {};
-  const validActionTypes = metadata.valid_action || [];
-  const validUnitTypes = metadata.valid_type || [];
 
-  // Check SKIP (0)
-  if (validActionTypes.includes(0)) {
-    validActions.push([0, null, null]);
-  }
-
-  // Check PLACE (1) and REPLACE (2)
-  const hasPlace = validActionTypes.includes(1);
-  const hasReplace = validActionTypes.includes(2);
-
-  if (hasPlace || hasReplace) {
-    const units = state.units || [];
-    const buildingUnits = new Map<number, any[]>();
-    for (const u of units) {
-      const bid = u.topology.buildingid;
-      if (!buildingUnits.has(bid)) {
-        buildingUnits.set(bid, []);
-      }
-      buildingUnits.get(bid)!.push(u);
-    }
-
-    units.forEach((unit: any) => {
-      const bid = unit.topology.buildingid;
-      const idInBuilding = unit.topology.idinbuilding;
-      const type = unit.state.type;
-      const id = unit.topology.id;
-
-      const bUnits = buildingUnits.get(bid) || [];
-      const lowerUnits = bUnits.filter(ou => ou.topology.idinbuilding < idInBuilding);
-      const isBottomMostEmpty = lowerUnits.every(ou => ou.state.type !== 0);
-
-      if (hasPlace && type === 0 && isBottomMostEmpty) {
-        validUnitTypes.forEach((t: any) => {
-          validActions.push([1, id, Number(t)]);
-        });
-      } else if (hasReplace && type !== 0) {
-        validUnitTypes.forEach((t: any) => {
-          validActions.push([2, id, Number(t)]);
-        });
-      }
-    });
-  }
-
-  return validActions;
-}
 
 interface Transition {
   stateFeatures: number[];
@@ -329,13 +282,6 @@ export async function trainRL(
 
   const maxSteps = graph.metadata?.max_turns ?? (N * 2);
 
-  // Clean starting graph JSON for stateless payloads
-  const startingGraphPayload = {
-    blocks: normalizedGraph.blocks,
-    units: normalizedGraph.units,
-    metadata: { timer: 0, game_started: false }
-  };
-
   for (let ep = 0; ep < episodes; ep++) {
     if (isCancelled()) break;
 
@@ -343,39 +289,40 @@ export async function trainRL(
     const developerBuffer: Transition[] = [];
     const governmentBuffer: Transition[] = [];
 
-    // 1. Call training start on backend
-    let episodeState: TopologyData = tsEngine.trainingStart({
-      graph: startingGraphPayload,
-      player_order: [1, 2]
-    });
+    // 直接构造并初始化 UrbanGraph，消除中途任何 json 转换
+    const episodeGraph = UrbanGraph.fromJson(normalizedGraph);
+    GameEngine.start_game(episodeGraph, [1, 2]);
     let stepCount = 0;
 
-    let stateFeatures = encodeGraphState(episodeState).flat();
+    let stateFeatures = encodeGraphState(episodeGraph).flat();
     let finalStateFeatures = stateFeatures;
     let finalDone = false;
+
+    // 记录初始评估指标（由于是初始状态，必须先刷新一次全局地价）
+    let lastMetrics = {
+      government_profit: GameEngine.evaluate_government_profit(episodeGraph, false),
+      developer_profit: GameEngine.evaluate_developer_profit(episodeGraph, false),
+      total_population: GameEngine.calculate_total_population(episodeGraph)
+    };
 
     // On-policy rollout collection loop
     while (stepCount < maxSteps) {
       if (isCancelled()) break;
 
-      const unitsFinished = episodeState.units.every(u => u.state.type !== 0);
-      const timerFinished = (episodeState.metadata?.timer ?? 0) >= maxSteps;
+      const unitsFinished = episodeGraph.units.every(u => u.type !== 0);
+      const timerFinished = episodeGraph.timer >= maxSteps;
       if (unitsFinished || timerFinished) {
         finalDone = true;
         break;
       }
 
-      const validActions = getValidActions(episodeState);
+      const validActions = GameEngine.get_valid_actions(episodeGraph);
       if (validActions.length === 0) {
         finalDone = true;
         break;
       }
 
-      const activePlayer = episodeState.metadata.next_player ?? PlayerType.DEVELOPER;
-      if (activePlayer !== PlayerType.DEVELOPER && activePlayer !== PlayerType.GOVERNMENT) {
-        throw new TypeError(`Invalid PlayerType value: ${activePlayer}`);
-      }
-
+      const activePlayer = episodeGraph.player_order[0];
       const actorModel = activePlayer === PlayerType.DEVELOPER ? developerModel : governmentModel;
 
       // Forward pass to get action logits and state value from Centralized Critic (1D Flat MLP style)
@@ -386,18 +333,15 @@ export async function trainRL(
         return { lTensor: l.clone(), vTensor: v.clone() };
       });
 
-      const logitsData = await lTensor.data();
-      const vData = await vTensor.data();
-      lTensor.dispose();
-      vTensor.dispose();
+      const logits = await lTensor.data();
+      const stateValues = await vTensor.data();
+      tf.dispose([lTensor, vTensor]);
 
-      const logits = Array.from(logitsData);
-      const stateValue = activePlayer === PlayerType.DEVELOPER ? vData[0] : vData[1];
+      const stateValue = activePlayer === PlayerType.DEVELOPER ? stateValues[0] : stateValues[1];
 
-      // Construct action mask (1 for valid, 0 for invalid)
       const mask = new Array(outputSize).fill(0);
       const validIndices = validActions.map(action => {
-        const idx = actionToId(action, episodeState.units);
+        const idx = actionToId(action, episodeGraph.units);
         mask[idx] = 1;
         return idx;
       });
@@ -429,14 +373,20 @@ export async function trainRL(
       // Step action configuration
       const builtType = chosenAction[2] ?? 0;
 
-      const nextEpisodeState: TopologyData = tsEngine.trainingStep(
+      // 原地步进动作
+      GameEngine.action(
+        episodeGraph,
+        validActions,
         chosenAction[0] ?? 0,
         chosenAction[1],
         builtType
       );
 
-      const lastMetrics = episodeState.metadata.evaulate || { developer_profit: 0, government_profit: 0 };
-      const nextMetrics = nextEpisodeState.metadata.evaulate || { developer_profit: 0, government_profit: 0 };
+      const nextMetrics = {
+        government_profit: GameEngine.evaluate_government_profit(episodeGraph, true),
+        developer_profit: GameEngine.evaluate_developer_profit(episodeGraph, true),
+        total_population: GameEngine.calculate_total_population(episodeGraph)
+      };
 
       // Reward computation
       let reward = 0;
@@ -455,20 +405,20 @@ export async function trainRL(
       // 2. 智能条件 SKIP 惩罚：有空地却跳过重罚，建满跳过不罚
       const isSkip = (chosenAction[0] ?? 0) === 0;
       if (isSkip) {
-        const hasEmptySlots = episodeState.units.some(u => u.state.type === 0);
+        const hasEmptySlots = episodeGraph.units.some(u => u.type === 0);
         if (hasEmptySlots) {
           reward -= SKIP_PENALTY;
         }
       }
 
-      const nextUnitsFinished = nextEpisodeState.units.every(u => u.state.type !== 0);
-      const nextTimerFinished = (nextEpisodeState.metadata?.timer ?? 0) >= maxSteps;
+      const nextUnitsFinished = episodeGraph.units.every(u => u.type !== 0);
+      const nextTimerFinished = episodeGraph.timer >= maxSteps;
       const done = nextUnitsFinished || nextTimerFinished;
 
       // Penalty 2: 终局惩罚 — 若因超时结束且仍有空格，按空格比例惩罚
       if (done && nextTimerFinished && !nextUnitsFinished) {
-        const totalUnits = nextEpisodeState.units.length;
-        const emptyUnits = nextEpisodeState.units.filter(u => u.state.type === 0).length;
+        const totalUnits = episodeGraph.units.length;
+        const emptyUnits = episodeGraph.units.filter(u => u.type === 0).length;
         const emptyRatio = totalUnits > 0 ? emptyUnits / totalUnits : 0;
         reward -= 0.5 * emptyRatio;
       }
@@ -490,8 +440,8 @@ export async function trainRL(
         governmentBuffer.push(transition);
       }
 
-      episodeState = nextEpisodeState;
-      stateFeatures = encodeGraphState(episodeState).flat();
+      lastMetrics = nextMetrics;
+      stateFeatures = encodeGraphState(episodeGraph).flat();
       finalStateFeatures = stateFeatures;
       finalDone = done;
       stepCount++;
