@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "cp node_modules/@tensorflow/tfjs-backend-wasm/dist/*.wasm public/",
     "dev": "next dev -p 3001 --webpack",
+    "prebuild": "cp node_modules/@tensorflow/tfjs-backend-wasm/dist/*.wasm public/",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

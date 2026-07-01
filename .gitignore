@@ -51,3 +51,5 @@ __pycache__/
 *.pyd
 .pytest_cache/
 
+# tensorflow wasm binaries
+public/*.wasm
