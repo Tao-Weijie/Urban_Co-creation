@@ -108,23 +108,36 @@ export function encodeGraphState(
     if (targetUnit) {
       const originalType = targetUnit.type;
 
+      // 局部暂存受影响地块的原评估地价以供还原，防全局污染
+      const affectedBlocks = [bid, ...baseGraph.getNeighbors(bid)];
+      const originalValues = new Map<number, number>();
+      for (const ab of affectedBlocks) {
+        originalValues.set(ab, baseGraph.blockValues.get(ab) ?? 30.0);
+      }
+
       // 1. 原地模拟在此位置放置住宅的大盘开发商利润增量
       targetUnit.type = UnitType.RESIDENTIAL;
-      const resDevProfit = GameEngine.evaluate_developer_profit(baseGraph);
+      GameEngine.update_local_value(baseGraph, bid); // 仅局部更新受影响块
+      const resDevProfit = GameEngine.evaluate_developer_profit(baseGraph, true); // skipUpdate 设为 true
 
       targetUnit.type = UnitType.EMPTY;
-      const emptyDevProfit = GameEngine.evaluate_developer_profit(baseGraph);
+      GameEngine.update_local_value(baseGraph, bid);
+      const emptyDevProfit = GameEngine.evaluate_developer_profit(baseGraph, true);
 
       devGain = Math.max(0, resDevProfit - emptyDevProfit);
 
       // 2. 原地模拟在此位置放置绿地的大盘政府收益增量
       targetUnit.type = UnitType.GREEN;
-      const resGovProfit = GameEngine.evaluate_government_profit(baseGraph);
+      GameEngine.update_local_value(baseGraph, bid);
+      const resGovProfit = GameEngine.evaluate_government_profit(baseGraph, true);
 
       govGain = Math.max(0, resGovProfit - emptyDevProfit); // 使用相同的 empty 基准进行相减
 
-      // 原地复原单元的真实状态，保证大盘数据状态一致
+      // 原地复原单元的真实状态，并完整回滚局部地块评估值，保证大盘数据状态一致
       targetUnit.type = originalType;
+      for (const ab of affectedBlocks) {
+        baseGraph.blockValues.set(ab, originalValues.get(ab)!);
+      }
     }
 
     const row = setFeature(u, devGain, govGain, v);
@@ -324,7 +337,8 @@ export async function trainRL(
     });
     let stepCount = 0;
 
-    let finalStateFeatures = encodeGraphState(episodeState).flat();
+    let stateFeatures = encodeGraphState(episodeState).flat();
+    let finalStateFeatures = stateFeatures;
     let finalDone = false;
 
     // On-policy rollout collection loop
@@ -344,7 +358,6 @@ export async function trainRL(
         break;
       }
 
-      const stateFeatures = encodeGraphState(episodeState).flat();
       const activePlayer = episodeState.metadata.next_player ?? PlayerType.DEVELOPER;
       if (activePlayer !== PlayerType.DEVELOPER && activePlayer !== PlayerType.GOVERNMENT) {
         throw new TypeError(`Invalid PlayerType value: ${activePlayer}`);
@@ -465,7 +478,8 @@ export async function trainRL(
       }
 
       episodeState = nextEpisodeState;
-      finalStateFeatures = encodeGraphState(episodeState).flat();
+      stateFeatures = encodeGraphState(episodeState).flat();
+      finalStateFeatures = stateFeatures;
       finalDone = done;
       stepCount++;
 

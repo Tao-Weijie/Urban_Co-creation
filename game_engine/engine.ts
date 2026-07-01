@@ -380,8 +380,50 @@ export class GameEngine {
         return total_city_population;
     }
 
-    static evaluate_developer_profit(graph: UrbanGraph): number {
-        GameEngine.update_block_values(graph);
+    static update_local_value(graph: UrbanGraph, targetBlockId: number): void {
+        const blocksToUpdate = [targetBlockId, ...graph.getNeighbors(targetBlockId)];
+        
+        const block_to_units: { [key: string]: UrbanUnit[] } = {};
+        for (const u of graph.units) {
+            const bid = String(u.blockid);
+            const bidNum = Number(u.blockid);
+            if (blocksToUpdate.includes(bidNum) || graph.getNeighbors(bidNum).some(nb => blocksToUpdate.includes(nb))) {
+                if (!block_to_units[bid]) {
+                    block_to_units[bid] = [];
+                }
+                block_to_units[bid].push(u);
+            }
+        }
+
+        for (const blockId of blocksToUpdate) {
+            const bid = String(blockId);
+            const same_block_units = block_to_units[bid] || [];
+
+            const total_green_units = same_block_units.filter(ou => ou.type === UnitType.GREEN).length;
+            const total_residential_units = same_block_units.filter(ou => ou.type === UnitType.RESIDENTIAL).length;
+
+            let neighbor_green_units = 0;
+            let neighbor_res_units = 0;
+            const neighbors = graph.getNeighbors(blockId);
+            for (const neighbor_id of neighbors) {
+                const neighbor_units = block_to_units[String(neighbor_id)] || [];
+                neighbor_green_units += neighbor_units.filter(nu => nu.type === UnitType.GREEN).length;
+                neighbor_res_units += neighbor_units.filter(nu => nu.type === UnitType.RESIDENTIAL).length;
+            }
+
+            const value_green = 40.0 * Math.sqrt(total_green_units) + 20.0 * Math.sqrt(neighbor_green_units);
+            const value_penalty = 6.0 * total_residential_units + 3.0 * neighbor_res_units;
+
+            const baseVal = graph.initialBlockValues.get(blockId) ?? 30.0;
+            const blockVal = Math.min(100.0, baseVal + value_green - value_penalty);
+            graph.blockValues.set(blockId, blockVal);
+        }
+    }
+
+    static evaluate_developer_profit(graph: UrbanGraph, skipUpdateValues = false): number {
+        if (!skipUpdateValues) {
+            GameEngine.update_block_values(graph);
+        }
 
         let total_developer_revenue = 0;
         let total_developer_cost = 0;
@@ -405,8 +447,10 @@ export class GameEngine {
         return Math.round(developer_net_profit * 10) / 10;
     }
 
-    static evaluate_government_profit(graph: UrbanGraph): number {
-        GameEngine.update_block_values(graph);
+    static evaluate_government_profit(graph: UrbanGraph, skipUpdateValues = false): number {
+        if (!skipUpdateValues) {
+            GameEngine.update_block_values(graph);
+        }
 
         let total_land_price = 0;
         let total_tax_revenue = 0;
