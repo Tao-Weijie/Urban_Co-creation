@@ -120,10 +120,9 @@ export default function RightBar() {
                 <span className="text-[9px] font-bold" style={{ color: role.color }}>
                   {role.name}
                 </span>
-                <span className={`app-reward-badge ${
-                  playerMetrics.reward > 0 ? 'app-reward-badge-positive' :
-                  playerMetrics.reward < 0 ? 'app-reward-badge-negative' : 'app-reward-badge-neutral'
-                }`}>
+                <span className={`app-reward-badge ${playerMetrics.reward > 0 ? 'app-reward-badge-positive' :
+                    playerMetrics.reward < 0 ? 'app-reward-badge-negative' : 'app-reward-badge-neutral'
+                  }`}>
                   Rew: {playerMetrics.reward > 0 ? '+' : ''}{fmt(playerMetrics.reward, 3)}
                 </span>
               </div>
@@ -230,8 +229,8 @@ export default function RightBar() {
                   onChange={(e) => setRlBackend(e.target.value as 'gpu' | 'cpu')}
                   className="bg-white dark:bg-black/50 outline outline-1 outline-black/10 dark:outline-white/10 rounded px-1.5 py-0.5 text-right text-[10px]"
                 >
-                  <option value="gpu">GPU Acceleration</option>
-                  <option value="cpu">CPU Multi-core</option>
+                  <option value="gpu">GPU </option>
+                  <option value="cpu">CPU </option>
                 </select>
               </div>
 

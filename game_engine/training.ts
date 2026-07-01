@@ -467,10 +467,10 @@ export async function trainRL(
 
       // Penalty 2: 终局惩罚 — 若因超时结束且仍有空格，按空格比例惩罚
       if (done && nextTimerFinished && !nextUnitsFinished) {
-         const totalUnits = nextEpisodeState.units.length;
-         const emptyUnits = nextEpisodeState.units.filter(u => u.state.type === 0).length;
-         const emptyRatio = totalUnits > 0 ? emptyUnits / totalUnits : 0;
-         reward -= 0.5 * emptyRatio;
+        const totalUnits = nextEpisodeState.units.length;
+        const emptyUnits = nextEpisodeState.units.filter(u => u.state.type === 0).length;
+        const emptyRatio = totalUnits > 0 ? emptyUnits / totalUnits : 0;
+        reward -= 0.5 * emptyRatio;
       }
 
       // Record step transition
@@ -624,7 +624,7 @@ export async function trainRL(
           const actorLoss = tf.mean(tf.minimum(surr1, surr2)).neg();
           const entropy = tf.mean(tf.sum(probs.mul(tf.log(probs.add(1e-8))).neg(), 1));
           const loss = actorLoss.sub(entropy.mul(0.01));
- 
+
           devActorLossTensor = tf.keep(actorLoss.clone());
           devEntropyTensor = tf.keep(entropy.clone());
           return loss as tf.Scalar;
@@ -662,7 +662,7 @@ export async function trainRL(
           const actorLoss = tf.mean(tf.minimum(surr1, surr2)).neg();
           const entropy = tf.mean(tf.sum(probs.mul(tf.log(probs.add(1e-8))).neg(), 1));
           const loss = actorLoss.sub(entropy.mul(0.01));
- 
+
           govActorLossTensor = tf.keep(actorLoss.clone());
           govEntropyTensor = tf.keep(entropy.clone());
           return loss as tf.Scalar;
