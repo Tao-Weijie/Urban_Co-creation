@@ -79,6 +79,8 @@ interface GameContextType {
   rlLossHistory: number[];
   rlMetrics: RLTrainingMetrics | null;
   isRlLoaded: boolean;
+  rlBackend: 'gpu' | 'wasm' | 'cpu';
+  setRlBackend: (val: 'gpu' | 'wasm' | 'cpu') => void;
 
   // Timeline
   isTimelinePlaying: boolean;
@@ -239,6 +241,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [rlLossHistory, setRlLossHistory] = useState<number[]>([]);
   const [rlMetrics, setRlMetrics] = useState<RLTrainingMetrics | null>(null);
   const [isRlLoaded, setIsRlLoaded] = useState<boolean>(false);
+  const [rlBackend, setRlBackend] = useState<'gpu' | 'wasm' | 'cpu'>('gpu');
 
   // Timeline playback states
   const [isTimelinePlaying, setIsTimelinePlaying] = useState<boolean>(false);
@@ -782,7 +785,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setRlLossHistory(prev => [...prev, metrics.avgLoss]);
           setRlMetrics(metrics);
         },
-        () => rlCancelledRef.current
+        () => rlCancelledRef.current,
+        rlBackend
       );
 
       if (!rlCancelledRef.current) {
@@ -887,6 +891,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       rlLossHistory,
       rlMetrics,
       isRlLoaded,
+      rlBackend,
+      setRlBackend,
       isTimelinePlaying,
       setIsTimelinePlaying,
       timelineFps,

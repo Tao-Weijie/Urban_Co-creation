@@ -12,6 +12,8 @@ export default function RightBar() {
     rlLossHistory,
     rlMetrics,
     isRlLoaded,
+    rlBackend,
+    setRlBackend,
     rolesConfig,
     handleTrainRL,
     cancelTrainRL,
@@ -218,6 +220,20 @@ export default function RightBar() {
                   }}
                   className="w-16 bg-white dark:bg-black/50 outline outline-1 outline-black/10 dark:outline-white/10 rounded px-1.5 py-0.5 text-right"
                 />
+              </div>
+
+              {/* Backend */}
+              <div className="flex justify-between items-center">
+                <span className="text-zinc-500">Device Backend:</span>
+                <select
+                  value={rlBackend}
+                  onChange={(e) => setRlBackend(e.target.value as 'gpu' | 'wasm' | 'cpu')}
+                  className="bg-white dark:bg-black/50 outline outline-1 outline-black/10 dark:outline-white/10 rounded px-1.5 py-0.5 text-right text-[10px]"
+                >
+                  <option value="gpu">GPU (WebGPU/WebGL)</option>
+                  <option value="wasm">WASM (SIMD CPU)</option>
+                  <option value="cpu">CPU (Legacy)</option>
+                </select>
               </div>
 
               {/* Action Control */}
