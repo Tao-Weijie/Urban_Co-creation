@@ -111,7 +111,17 @@ export function initOrGetRLModels(inputSize: number, outputSize: number): {
   const playerTypes = Object.keys(PlayerConfig).map(Number) as PlayerType[];
 
   for (const playerType of playerTypes) {
-    if (actorModels.has(playerType)) {
+    let needsRebuild = false;
+    const existingModel = actorModels.get(playerType);
+    if (existingModel) {
+      const expectedShape = existingModel.inputs[0].shape[1];
+      if (expectedShape !== inputSize) {
+        console.log(`[MAPPO] Map size change detected (expected Actor shape: ${expectedShape}, current inputSize: ${inputSize}). Rebuilding actor models...`);
+        needsRebuild = true;
+      }
+    }
+
+    if (existingModel && !needsRebuild) {
       console.log(`[MAPPO] Reusing existing loaded/trained Player Actor model: ${PlayerConfig[playerType].name}`);
     } else {
       console.log(`[MAPPO] Initializing new Player Actor model: ${PlayerConfig[playerType].name}`);
@@ -120,7 +130,16 @@ export function initOrGetRLModels(inputSize: number, outputSize: number): {
     }
   }
 
+  let criticNeedsRebuild = false;
   if (centralizedCriticModel) {
+    const expectedCriticShape = centralizedCriticModel.inputs[0].shape[1];
+    if (expectedCriticShape !== inputSize) {
+      console.log(`[MAPPO] Map size change detected (expected Critic shape: ${expectedCriticShape}, current inputSize: ${inputSize}). Rebuilding critic model...`);
+      criticNeedsRebuild = true;
+    }
+  }
+
+  if (centralizedCriticModel && !criticNeedsRebuild) {
     console.log("[MAPPO] Reusing existing loaded/trained Centralized Critic model.");
   } else {
     console.log("[MAPPO] Initializing new Centralized Critic model.");
