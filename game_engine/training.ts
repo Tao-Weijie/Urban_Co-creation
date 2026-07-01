@@ -249,10 +249,10 @@ export async function trainRL(
   learningRate: number,
   onEpisodeEnd: (metrics: RLTrainingMetrics) => void,
   isCancelled: () => boolean,
-  backendOption: 'gpu' | 'wasm' | 'cpu' = 'gpu'
+  backendOption: 'gpu' | 'cpu' = 'gpu'
 ): Promise<void> {
-  // 动态切换指定后端，保持 GPU/WASM/CPU 高效选择
-  if (backendOption === 'wasm') {
+  // 动态切换指定后端：gpu 使用 WebGPU -> WebGL；cpu 使用 WASM (多核) -> 原生 CPU (单核)
+  if (backendOption === 'cpu') {
     try {
       setWasmPaths('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm/dist/');
       tf.env().set('WASM_HAS_MULTITHREAD_SUPPORT', true);
@@ -260,26 +260,21 @@ export async function trainRL(
       await tf.setBackend('wasm');
       console.log(`[MAPPO] Switched backend to: WASM (SIMD & Multithread enabled)`);
     } catch (e) {
-      console.warn(`[MAPPO] Failed to switch to WASM backend, fallback to CPU:`, e);
+      console.warn(`[MAPPO] Failed to switch to WASM backend, fallback to pure CPU:`, e);
       await tf.setBackend('cpu');
     }
-  } else if (backendOption === 'cpu') {
-    await tf.setBackend('cpu');
-    console.log(`[MAPPO] Switched backend to: CPU`);
   } else {
-    // 强制使用 GPU，优先使用 WebGPU 其次 WebGL
-    if (tf.getBackend() !== 'webgpu' && tf.getBackend() !== 'webgl') {
+    // gpu 模式：优先使用 WebGPU 其次 WebGL
+    try {
+      await tf.setBackend('webgpu');
+      console.log(`[MAPPO] Switched backend to: WebGPU`);
+    } catch (e) {
+      console.warn(`[MAPPO] Failed to switch to WebGPU backend, trying WebGL:`, e);
       try {
-        await tf.setBackend('webgpu');
-        console.log(`[MAPPO] Switched backend to: WebGPU`);
-      } catch (e) {
-        console.warn(`[MAPPO] Failed to switch to WebGPU backend, trying WebGL:`, e);
-        try {
-          await tf.setBackend('webgl');
-          console.log(`[MAPPO] Switched backend to: WebGL`);
-        } catch (err) {
-          console.warn(`[MAPPO] Failed to switch to WebGL backend, fallback to current:`, err);
-        }
+        await tf.setBackend('webgl');
+        console.log(`[MAPPO] Switched backend to: WebGL`);
+      } catch (err) {
+        console.warn(`[MAPPO] Failed to switch to WebGL backend, fallback to current:`, err);
       }
     }
   }

@@ -23,10 +23,6 @@ function validateActionType(val: any): ActionType {
     throw new TypeError(`Invalid ActionType value: ${val}`);
 }
 
-
-
-
-
 export class UrbanUnit {
     topology: {
         id: number;
@@ -382,7 +378,7 @@ export class GameEngine {
 
     static update_local_value(graph: UrbanGraph, targetBlockId: number): void {
         const blocksToUpdate = [targetBlockId, ...graph.getNeighbors(targetBlockId)];
-        
+
         const block_to_units: { [key: string]: UrbanUnit[] } = {};
         for (const u of graph.units) {
             const bid = String(u.blockid);

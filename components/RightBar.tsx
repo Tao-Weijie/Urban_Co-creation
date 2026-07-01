@@ -227,12 +227,11 @@ export default function RightBar() {
                 <span className="text-zinc-500">Device Backend:</span>
                 <select
                   value={rlBackend}
-                  onChange={(e) => setRlBackend(e.target.value as 'gpu' | 'wasm' | 'cpu')}
+                  onChange={(e) => setRlBackend(e.target.value as 'gpu' | 'cpu')}
                   className="bg-white dark:bg-black/50 outline outline-1 outline-black/10 dark:outline-white/10 rounded px-1.5 py-0.5 text-right text-[10px]"
                 >
-                  <option value="gpu">GPU (WebGPU/WebGL)</option>
-                  <option value="wasm">WASM (SIMD CPU)</option>
-                  <option value="cpu">CPU (Legacy)</option>
+                  <option value="gpu">GPU Acceleration</option>
+                  <option value="cpu">CPU Multi-core</option>
                 </select>
               </div>
 

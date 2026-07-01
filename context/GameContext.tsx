@@ -79,8 +79,8 @@ interface GameContextType {
   rlLossHistory: number[];
   rlMetrics: RLTrainingMetrics | null;
   isRlLoaded: boolean;
-  rlBackend: 'gpu' | 'wasm' | 'cpu';
-  setRlBackend: (val: 'gpu' | 'wasm' | 'cpu') => void;
+  rlBackend: 'gpu' | 'cpu';
+  setRlBackend: (val: 'gpu' | 'cpu') => void;
 
   // Timeline
   isTimelinePlaying: boolean;
@@ -241,7 +241,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [rlLossHistory, setRlLossHistory] = useState<number[]>([]);
   const [rlMetrics, setRlMetrics] = useState<RLTrainingMetrics | null>(null);
   const [isRlLoaded, setIsRlLoaded] = useState<boolean>(false);
-  const [rlBackend, setRlBackend] = useState<'gpu' | 'wasm' | 'cpu'>('gpu');
+  const [rlBackend, setRlBackend] = useState<'gpu' | 'cpu'>('gpu');
 
   // Timeline playback states
   const [isTimelinePlaying, setIsTimelinePlaying] = useState<boolean>(false);
